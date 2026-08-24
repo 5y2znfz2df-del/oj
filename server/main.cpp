@@ -55,22 +55,6 @@ static json parse_body(const httplib::Request& req) {
     try { return json::parse(req.body); } catch (...) { return json::object(); }
 }
 
-// 班级扩展内容读取/保存（题库/比赛/训练/作业）
-static json load_class_content(int cid) {
-    auto cc = load_data("class_contents.json");
-    string key = to_string(cid);
-    if (!cc.contains(key) || !cc[key].is_object()) cc[key] = json::object();
-    auto& c = cc[key];
-    if (!c.contains("problems"))  c["problems"]  = json::array();
-    if (!c.contains("contests"))  c["contests"]  = json::array();
-    if (!c.contains("trainings")) c["trainings"] = json::array();
-    if (!c.contains("homeworks")) c["homeworks"] = json::array();
-    return cc;
-}
-static void save_class_content(int cid, const json& full) {
-    save_data("class_contents.json", full);
-}
-
 static string bearer_token(const httplib::Request& req) {
     auto it = req.headers.find("Authorization");
     if (it == req.headers.end()) return "";
@@ -108,6 +92,22 @@ static json require_admin(const httplib::Request& req, httplib::Response& res) {
 // ---------------- 数据文件访问 ----------------
 static json load_data(const string& name) { return store::load(DATA_DIR + "/" + name); }
 static void save_data(const string& name, const json& j) { store::save(DATA_DIR + "/" + name, j); }
+
+// 班级扩展内容读取/保存（题库/比赛/训练/作业）
+static json load_class_content(int cid) {
+    auto cc = load_data("class_contents.json");
+    string key = to_string(cid);
+    if (!cc.contains(key) || !cc[key].is_object()) cc[key] = json::object();
+    auto& c = cc[key];
+    if (!c.contains("problems"))  c["problems"]  = json::array();
+    if (!c.contains("contests"))  c["contests"]  = json::array();
+    if (!c.contains("trainings")) c["trainings"] = json::array();
+    if (!c.contains("homeworks")) c["homeworks"] = json::array();
+    return cc;
+}
+static void save_class_content(int cid, const json& full) {
+    save_data("class_contents.json", full);
+}
 
 static int next_id(const json& arr) {
     int mx = 0;
