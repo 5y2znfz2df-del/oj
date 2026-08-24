@@ -1,0 +1,64 @@
+{
+  "problems": [
+    {
+      "id": 1,
+      "title": "A+B Problem",
+      "description": "输入两个整数 a 和 b，输出它们的和。这是每个 OJ 的第一道题，传说做不对它的程序员都转行去写前端了。",
+      "input_desc": "一行两个整数 a 和 b，用空格隔开。",
+      "output_desc": "输出一个整数，表示 a + b 的值。",
+      "samples": [
+        { "input": "1 2", "output": "3" }
+      ],
+      "time_limit": 1,
+      "memory_limit": 256,
+      "difficulty": 1,
+      "tags": ["入门", "语法"],
+      "testcases": [
+        { "input": "1 2\n", "output": "3\n" },
+        { "input": "100 200\n", "output": "300\n" },
+        { "input": "-5 8\n", "output": "3\n" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "汉诺塔（三柱）",
+      "description": "经典的汉诺塔问题：三根柱子，N 个盘子从下往上按大小顺序摞着。每次只能移动一个盘子，小盘子上不能放大盘子。求把 N 个盘子全部移到第三根柱子的最少移动次数。",
+      "input_desc": "一个整数 N（1 <= N <= 50），表示盘子的数目。",
+      "output_desc": "输出一个整数，表示最少移动次数。",
+      "samples": [
+        { "input": "3", "output": "7" }
+      ],
+      "time_limit": 1,
+      "memory_limit": 256,
+      "difficulty": 2,
+      "tags": ["递推", "递归"],
+      "testcases": [
+        { "input": "1\n", "output": "1\n" },
+        { "input": "3\n", "output": "7\n" },
+        { "input": "10\n", "output": "1023\n" },
+        { "input": "50\n", "output": "1125899906842623\n" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "汉诺塔Ⅲ（四柱）",
+      "description": "Gardon 觉得三柱汉诺塔太累，又找来一根一模一样的柱子。借助第 4 根柱子，把 N 个盘子全部移到第三根柱子上，最少需要多少次移动？",
+      "input_desc": "一个整数 N（1 <= N <= 50），表示盘子的数目。",
+      "output_desc": "输出一个整数，表示最少移动次数。",
+      "samples": [
+        { "input": "3", "output": "5" },
+        { "input": "12", "output": "81" }
+      ],
+      "time_limit": 1,
+      "memory_limit": 256,
+      "difficulty": 4,
+      "tags": ["递推", "进阶", "枚举"],
+      "testcases": [
+        { "input": "1\n", "output": "1\n" },
+        { "input": "3\n", "output": "5\n" },
+        { "input": "12\n", "output": "81\n" },
+        { "input": "30\n", "output": "131073\n" }
+      ]
+    }
+  ]
+}

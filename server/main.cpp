@@ -1,0 +1,731 @@
+// =============================================
+// 比特 OJ - 后端主服务
+// 路由 + 业务逻辑 + 静态文件服务
+// 依赖：cpp-httplib / nlohmann-json / MySQL C API / OpenSSL
+// =============================================
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unordered_map>
+#include <vector>
+
+#include "httplib.h"
+#include "json.hpp"
+
+#include "auth.h"
+#include "db.h"
+#include "judge.h"
+#include "store.h"
+
+using namespace std;
+using json = nlohmann::json;
+
+static DB         g_db;
+static Auth       g_auth;
+static string     DATA_DIR = "data";
+static string     TEMP_DIR = "temp";
+static mutex      g_biz_mu;   // 保护「读-改-写」复合操作（购买/加入班级等）
+
+const int AC_POINTS  = 10;    // 首 AC 一题得 10 分
+const int PAGE_SIZE  = 20;
+const int MAX_CODE_LEN = 100000;
+
+// ---------------- 工具函数 ----------------
+static json ok_j(const json& extra = json::object()) {
+    json j = {{"ok", true}};
+    for (auto it = extra.begin(); it != extra.end(); ++it) j[it.key()] = it.value();
+    return j;
+}
+static void respond(httplib::Response& res, const json& j) {
+    res.set_content(j.dump(), "application/json; charset=utf-8");
+}
+static void fail(httplib::Response& res, int code, const string& msg) {
+    json j = {{"ok", false}, {"msg", msg}};
+    res.status = code;
+    respond(res, j);
+}
+static json parse_body(const httplib::Request& req) {
+    try { return json::parse(req.body); } catch (...) { return json::object(); }
+}
+static string bearer_token(const httplib::Request& req) {
+    auto it = req.headers.find("Authorization");
+    if (it == req.headers.end()) return "";
+    string v = it->second;
+    if (v.rfind("Bearer ", 0) == 0) return v.substr(7);
+    return v;
+}
+
+// 返回当前用户 json（未登录返回空 json）
+static json current_user(const httplib::Request& req) {
+    string tok = bearer_token(req);
+    if (tok.empty()) return json();
+    Session s;
+    if (!g_auth.check(tok, s)) return json();
+    auto rows = g_db.rows("SELECT id,username,role,points,solved_count FROM users"
+                          " WHERE username='" + g_db.escape(s.username) + "' LIMIT 1");
+    if (rows.empty()) return json();
+    json u = {{"id", stoll(rows[0][0])}, {"username", rows[0][1]},
+              {"role", rows[0][2]},       {"points", stoi(rows[0][3])},
+              {"solved_count", stoi(rows[0][4])}};
+    return u;
+}
+static json require_user(const httplib::Request& req, httplib::Response& res) {
+    auto u = current_user(req);
+    if (u.empty()) { fail(res, 401, "请先登录"); return json(); }
+    return u;
+}
+static json require_admin(const httplib::Request& req, httplib::Response& res) {
+    auto u = require_user(req, res);
+    if (u.empty()) return json();
+    if (u["role"] != "admin") { fail(res, 403, "需要管理员权限"); return json(); }
+    return u;
+}
+
+// ---------------- 数据文件访问 ----------------
+static json load_data(const string& name) { return store::load(DATA_DIR + "/" + name); }
+static void save_data(const string& name, const json& j) { store::save(DATA_DIR + "/" + name, j); }
+
+static int next_id(const json& arr) {
+    int mx = 0;
+    for (auto& x : arr) mx = max(mx, x.value("id", 0));
+    return mx + 1;
+}
+static json problems_file() { return load_data("problems.json"); }
+
+static void mkdirs(const string& path) {
+    string cur;
+    for (size_t i = 0; i < path.size(); i++) {
+        cur += path[i];
+        if (path[i] == '/') mkdir(cur.c_str(), 0755);
+    }
+    mkdir(path.c_str(), 0755);
+}
+
+// ---------------- 路由注册 ----------------
+static void register_routes(httplib::Server& svr) {
+
+    // ========== 认证 ==========
+    svr.Post("/api/register", [](const httplib::Request& req, httplib::Response& res) {
+        auto b = parse_body(req);
+        string name = b.value("username", ""), pass = b.value("password", "");
+        if (name.size() < 3 || name.size() > 32) return fail(res, 400, "用户名长度须为 3-32 字符");
+        if (pass.size() < 6 || pass.size() > 64) return fail(res, 400, "密码长度须为 6-64 字符");
+        auto dup = g_db.rows("SELECT id FROM users WHERE username='" + g_db.escape(name) + "'");
+        if (!dup.empty()) return fail(res, 400, "用户名已被注册，换一个试试");
+        if (!g_db.query("INSERT INTO users(username,password,role) VALUES('" +
+                        g_db.escape(name) + "','" + Auth::sha256(pass) + "','user')"))
+            return fail(res, 500, "注册失败，请稍后再试");
+        string tok = g_auth.login(name, "user");
+        respond(res, ok_j({{"token", tok}, {"username", name}, {"role", "user"},
+                           {"points", 0}, {"solved_count", 0}}));
+    });
+
+    svr.Post("/api/login", [](const httplib::Request& req, httplib::Response& res) {
+        auto b = parse_body(req);
+        string name = b.value("username", ""), pass = b.value("password", "");
+        auto r = g_db.rows("SELECT id,username,password,role,points,solved_count FROM users"
+                           " WHERE username='" + g_db.escape(name) + "' LIMIT 1");
+        if (r.empty() || r[0][2] != Auth::sha256(pass))
+            return fail(res, 401, "用户名或密码错误");
+        string tok = g_auth.login(r[0][1], r[0][3]);
+        respond(res, ok_j({{"token", tok}, {"username", r[0][1]}, {"role", r[0][3]},
+                           {"points", stoi(r[0][4])}, {"solved_count", stoi(r[0][5])}}));
+    });
+
+    svr.Post("/api/logout", [](const httplib::Request& req, httplib::Response& res) {
+        g_auth.logout(bearer_token(req));
+        respond(res, ok_j());
+    });
+
+    svr.Get("/api/me", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        respond(res, ok_j({{"user", u}}));
+    });
+
+    // ========== 题库 ==========
+    svr.Get("/api/problems", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        auto pf = problems_file();
+        set<int> solved;
+        if (!u.empty()) {
+            auto r = g_db.rows("SELECT DISTINCT problem_id FROM submissions WHERE user_id=" +
+                               to_string(u["id"].get<long long>()) + " AND status='AC'");
+            for (auto& row : r) solved.insert(stoi(row[0]));
+        }
+        json list = json::array();
+        for (auto& p : pf["problems"]) {
+            list.push_back({{"id", p["id"]},
+                            {"title", p.value("title", "")},
+                            {"difficulty", p.value("difficulty", 1)},
+                            {"tags", p.value("tags", json::array())},
+                            {"solved", solved.count(p["id"].get<int>()) ? true : false}});
+        }
+        respond(res, ok_j({{"problems", list}}));
+    });
+
+    svr.Get(R"(/api/problems/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        int pid = stoi(req.matches[1].str());
+        auto pf = problems_file();
+        for (auto& p : pf["problems"]) {
+            if (p["id"].get<int>() == pid) {
+                json out = p;
+                auto viewer = current_user(req);
+                // 测试数据对普通用户保密，管理员（编辑题目）可见
+                if (viewer.empty() || viewer["role"] != "admin")
+                    out.erase("testcases");
+                respond(res, ok_j({{"problem", out}}));
+                return;
+            }
+        }
+        fail(res, 404, "题目不存在");
+    });
+
+    // ========== 提交与判题 ==========
+    svr.Post("/api/submit", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        if (!b.contains("problem_id") || !b.contains("code"))
+            return fail(res, 400, "参数不完整");
+        int pid = b["problem_id"].get<int>();
+        string code = b["code"].get<string>();
+        if (code.empty())                   return fail(res, 400, "代码不能为空");
+        if (code.size() > MAX_CODE_LEN)     return fail(res, 400, "代码太长（上限 100KB）");
+
+        auto pf = problems_file();
+        json* prob = nullptr;
+        for (auto& p : pf["problems"])
+            if (p["id"].get<int>() == pid) { prob = &p; break; }
+        if (!prob) return fail(res, 404, "题目不存在");
+
+        // 插入提交记录（先 Pending）
+        string uid = to_string(u["id"].get<long long>());
+        if (!g_db.query("INSERT INTO submissions(user_id,problem_id,code,status) VALUES(" +
+                        uid + "," + to_string(pid) + ",'" + g_db.escape(code) + "','Pending')"))
+            return fail(res, 500, "提交失败，请稍后再试");
+        long long sid = g_db.insert_id();
+
+        // 判题
+        vector<TestCase> cases;
+        for (auto& tc : (*prob)["testcases"])
+            cases.push_back({tc["input"].get<string>(), tc["output"].get<string>()});
+        Judge judge(TEMP_DIR);
+        JudgeResult r = judge.run(code, cases,
+                                  prob->value("time_limit", 1),
+                                  prob->value("memory_limit", 256));
+
+        // 更新提交记录
+        g_db.query("UPDATE submissions SET status='" + g_db.escape(r.status) +
+                   "', time_ms=" + to_string(r.time_ms) +
+                   ", memory_kb=" + to_string(r.memory_kb) + " WHERE id=" + to_string(sid));
+
+        // 首 AC 加分（加锁防并发双加）
+        if (r.status == "AC") {
+            lock_guard<mutex> lk(g_biz_mu);
+            auto cnt = g_db.rows("SELECT COUNT(*) FROM submissions WHERE user_id=" + uid +
+                                 " AND problem_id=" + to_string(pid) + " AND status='AC'");
+            bool first_ac = cnt.empty() || stoll(cnt[0][0]) == 0;
+            if (first_ac)
+                g_db.query("UPDATE users SET points=points+" + to_string(AC_POINTS) +
+                           ", solved_count=solved_count+1 WHERE id=" + uid);
+        }
+
+        respond(res, ok_j({{"submission_id", sid}, {"status", r.status},
+                           {"time_ms", r.time_ms}, {"memory_kb", r.memory_kb},
+                           {"detail", r.detail}}));
+    });
+
+    // ========== 提交记录 ==========
+    svr.Get("/api/submissions", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        bool all = req.get_param_value("all") == "1" && u["role"] == "admin";
+        int page = max(1, atoi(req.get_param_value("page").c_str()));
+        string where = all ? "1=1" : "s.user_id=" + to_string(u["id"].get<long long>());
+        auto r = g_db.rows("SELECT s.id,s.problem_id,s.status,s.time_ms,s.memory_kb,"
+                           "s.created_at,u.username FROM submissions s "
+                           "JOIN users u ON s.user_id=u.id WHERE " + where +
+                           " ORDER BY s.id DESC LIMIT " + to_string(PAGE_SIZE) +
+                           " OFFSET " + to_string((page - 1) * PAGE_SIZE));
+        auto pf = problems_file();
+        unordered_map<int, string> titles;
+        for (auto& p : pf["problems"]) titles[p["id"].get<int>()] = p.value("title", "");
+        json list = json::array();
+        for (auto& row : r) {
+            int pid = stoi(row[1]);
+            list.push_back({{"id", stoll(row[0])}, {"problem_id", pid},
+                            {"title", titles.count(pid) ? titles[pid] : "题目#" + to_string(pid)},
+                            {"status", row[2]}, {"time_ms", stoi(row[3])},
+                            {"memory_kb", stoi(row[4])}, {"created_at", row[5]},
+                            {"username", row[6]}});
+        }
+        respond(res, ok_j({{"submissions", list}}));
+    });
+
+    // ========== 排行榜 ==========
+    svr.Get("/api/ranklist", [](const httplib::Request& req, httplib::Response& res) {
+        auto r = g_db.rows("SELECT username,solved_count,points FROM users "
+                           "ORDER BY solved_count DESC, points DESC, id ASC LIMIT 100");
+        json list = json::array();
+        int rank = 1;
+        for (auto& row : r)
+            list.push_back({{"rank", rank++}, {"username", row[0]},
+                            {"solved", stoi(row[1])}, {"points", stoi(row[2])}});
+        respond(res, ok_j({{"ranklist", list}}));
+    });
+
+    // ========== 训练 ==========
+    svr.Get("/api/trainings", [](const httplib::Request& req, httplib::Response& res) {
+        auto tf = load_data("trainings.json");
+        auto pf = problems_file();
+        unordered_map<int, string> titles;
+        for (auto& p : pf["problems"]) titles[p["id"].get<int>()] = p.value("title", "");
+        json list = json::array();
+        for (auto& t : tf.value("trainings", json::array())) {
+            json probs = json::array();
+            for (int pid : t.value("problem_ids", json::array()))
+                probs.push_back({{"id", pid}, {"title",
+                    titles.count(pid) ? titles[pid] : "题目#" + to_string(pid)}});
+            list.push_back({{"id", t.value("id", 0)}, {"title", t.value("title", "")},
+                            {"description", t.value("description", "")},
+                            {"created_at", t.value("created_at", "")},
+                            {"problems", probs}});
+        }
+        respond(res, ok_j({{"trainings", list}}));
+    });
+
+    // ========== 公告 ==========
+    svr.Get("/api/announcements", [](const httplib::Request& req, httplib::Response& res) {
+        auto af = load_data("announcements.json");
+        respond(res, ok_j({{"announcements", af.value("announcements", json::array())}}));
+    });
+
+    // ========== 班级 ==========
+    svr.Get("/api/classes", [](const httplib::Request& req, httplib::Response& res) {
+        auto cf = load_data("classes.json");
+        auto u = current_user(req);
+        string me = u.empty() ? "" : u["username"].get<string>();
+        json list = json::array();
+        for (auto& c : cf.value("classes", json::array())) {
+            json members = c.value("members", json::array());
+            bool joined = false;
+            for (auto& m : members) if (m.get<string>() == me) { joined = true; break; }
+            list.push_back({{"id", c.value("id", 0)}, {"name", c.value("name", "")},
+                            {"description", c.value("description", "")},
+                            {"invite_code", c.value("invite_code", "")},
+                            {"member_count", (int)members.size()},
+                            {"joined", joined}});
+        }
+        respond(res, ok_j({{"classes", list}}));
+    });
+
+    svr.Post("/api/classes/join", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string code = b.value("invite_code", "");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cf = load_data("classes.json");
+        auto& cs = cf["classes"];
+        for (auto& c : cs) {
+            if (c.value("invite_code", "") != code) continue;
+            for (auto& m : c["members"])
+                if (m.get<string>() == u["username"]) return fail(res, 400, "你已经在这个班级里了");
+            c["members"].push_back(u["username"]);
+            save_data("classes.json", cf);
+            return respond(res, ok_j({{"class_name", c.value("name", "")}}));
+        }
+        fail(res, 404, "邀请码不存在");
+    });
+
+    svr.Post("/api/classes/leave", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        int cid = b.value("id", 0);
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cf = load_data("classes.json");
+        auto& cs = cf["classes"];
+        for (auto& c : cs) {
+            if (c.value("id", 0) != cid) continue;
+            auto& members = c["members"];
+            for (size_t i = 0; i < members.size(); i++)
+                if (members[i].get<string>() == u["username"]) {
+                    members.erase(members.begin() + (long)i);
+                    save_data("classes.json", cf);
+                    return respond(res, ok_j());
+                }
+            return fail(res, 400, "你不在这个班级里");
+        }
+        fail(res, 404, "班级不存在");
+    });
+
+    // ========== 商城 ==========
+    svr.Get("/api/shop", [](const httplib::Request& req, httplib::Response& res) {
+        auto sf = load_data("shop.json");
+        respond(res, ok_j({{"items", sf.value("items", json::array())}}));
+    });
+
+    svr.Post("/api/shop/buy", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        int item_id = b.value("item_id", 0);
+        lock_guard<mutex> lk(g_biz_mu);
+        auto sf = load_data("shop.json");
+        auto& items = sf["items"];
+        json* it = nullptr;
+        for (auto& x : items) if (x["id"].get<int>() == item_id) { it = &x; break; }
+        if (!it) return fail(res, 404, "商品不存在");
+        if (it->value("stock", -1) <= 0) return fail(res, 400, "库存不足，手慢无");
+        int price = it->value("price", 0);
+        int my_points = u["points"].get<int>();
+        if (my_points < price) return fail(res, 400, "积分不足，先去刷几道题吧");
+        g_db.query("UPDATE users SET points=points-" + to_string(price) +
+                   " WHERE id=" + to_string(u["id"].get<long long>()));
+        (*it)["stock"] = it->value("stock", 0) - 1;
+        save_data("shop.json", sf);
+        string iname = it->value("name", "");
+        g_db.query("INSERT INTO purchases(user_id,item_id,item_name,price) VALUES(" +
+                   to_string(u["id"].get<long long>()) + "," + to_string(item_id) +
+                   ",'" + g_db.escape(iname) + "'," + to_string(price) + ")");
+        respond(res, ok_j({{"item_name", iname}, {"points_left", my_points - price}}));
+    });
+
+    svr.Get("/api/shop/mine", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res);
+        if (u.empty()) return;
+        auto r = g_db.rows("SELECT item_name,price,created_at FROM purchases"
+                           " WHERE user_id=" + to_string(u["id"].get<long long>()) +
+                           " ORDER BY id DESC LIMIT 50");
+        json list = json::array();
+        for (auto& row : r)
+            list.push_back({{"item_name", row[0]}, {"price", stoi(row[1])}, {"created_at", row[2]}});
+        respond(res, ok_j({{"items", list}}));
+    });
+
+    // ========== 管理端：统计 ==========
+    svr.Get("/api/admin/stats", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto n1 = g_db.rows("SELECT COUNT(*) FROM users");
+        auto n2 = g_db.rows("SELECT COUNT(*) FROM submissions");
+        auto n3 = g_db.rows("SELECT COUNT(*) FROM submissions WHERE status='AC'");
+        auto pf = problems_file();
+        respond(res, ok_j({{"users", n1.empty() ? 0 : stoll(n1[0][0])},
+                           {"submissions", n2.empty() ? 0 : stoll(n2[0][0])},
+                           {"accepted", n3.empty() ? 0 : stoll(n3[0][0])},
+                           {"problems", (int)pf["problems"].size()}}));
+    });
+
+    // ========== 管理端：题目 ==========
+    svr.Post("/api/admin/problem", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "题目标题不能为空");
+        auto pf = problems_file();
+        auto& ps = pf["problems"];
+        json p = {{"id", next_id(ps)},
+                  {"title", title},
+                  {"description", b.value("description", "")},
+                  {"input_desc", b.value("input_desc", "")},
+                  {"output_desc", b.value("output_desc", "")},
+                  {"samples", b.value("samples", json::array())},
+                  {"time_limit", b.value("time_limit", 1)},
+                  {"memory_limit", b.value("memory_limit", 256)},
+                  {"difficulty", b.value("difficulty", 1)},
+                  {"tags", b.value("tags", json::array())},
+                  {"testcases", b.value("testcases", json::array())}};
+        ps.push_back(p);
+        save_data("problems.json", pf);
+        respond(res, ok_j({{"id", p["id"]}}));
+    });
+
+    svr.Put(R"(/api/admin/problem/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int pid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        auto pf = problems_file();
+        auto& ps = pf["problems"];
+        for (auto& p : ps) {
+            if (p["id"].get<int>() != pid) continue;
+            p["title"]        = b.value("title", p.value("title", ""));
+            p["description"]  = b.value("description", p.value("description", ""));
+            p["input_desc"]   = b.value("input_desc", p.value("input_desc", ""));
+            p["output_desc"]  = b.value("output_desc", p.value("output_desc", ""));
+            p["samples"]      = b.value("samples", p.value("samples", json::array()));
+            p["time_limit"]   = b.value("time_limit", p.value("time_limit", 1));
+            p["memory_limit"] = b.value("memory_limit", p.value("memory_limit", 256));
+            p["difficulty"]   = b.value("difficulty", p.value("difficulty", 1));
+            p["tags"]         = b.value("tags", p.value("tags", json::array()));
+            p["testcases"]    = b.value("testcases", p.value("testcases", json::array()));
+            save_data("problems.json", pf);
+            return respond(res, ok_j());
+        }
+        fail(res, 404, "题目不存在");
+    });
+
+    svr.Delete(R"(/api/admin/problem/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int pid = stoi(req.matches[1].str());
+        auto pf = problems_file();
+        auto& ps = pf["problems"];
+        for (size_t i = 0; i < ps.size(); i++) {
+            if (ps[i]["id"].get<int>() == pid) {
+                ps.erase(ps.begin() + (long)i);
+                save_data("problems.json", pf);
+                return respond(res, ok_j());
+            }
+        }
+        fail(res, 404, "题目不存在");
+    });
+
+    // JSON 批量导入（兼容 {problems:[...]} 与裸数组）
+    svr.Post("/api/admin/problems/import", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        json arr = b.contains("problems") ? b["problems"] : b;
+        if (!arr.is_array() || arr.empty()) return fail(res, 400, "需要提供 problems 数组");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto pf = problems_file();
+        auto& ps = pf["problems"];
+        int added = 0;
+        for (auto& item : arr) {
+            if (!item.contains("title")) continue;
+            json p = {{"id", next_id(ps)},
+                      {"title", item.value("title", "")},
+                      {"description", item.value("description", "")},
+                      {"input_desc", item.value("input_desc", "")},
+                      {"output_desc", item.value("output_desc", "")},
+                      {"samples", item.value("samples", json::array())},
+                      {"time_limit", item.value("time_limit", 1)},
+                      {"memory_limit", item.value("memory_limit", 256)},
+                      {"difficulty", item.value("difficulty", 1)},
+                      {"tags", item.value("tags", json::array())},
+                      {"testcases", item.value("testcases", json::array())}};
+            ps.push_back(p);
+            added++;
+        }
+        save_data("problems.json", pf);
+        respond(res, ok_j({{"added", added}}));
+    });
+
+    // ========== 管理端：公告 ==========
+    svr.Post("/api/admin/announcement", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "标题不能为空");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto af = load_data("announcements.json");
+        auto& anns = af["announcements"];
+        anns.insert(anns.begin(), {{"id", next_id(anns)},
+                                   {"title", title},
+                                   {"content", b.value("content", "")},
+                                   {"created_at", b.value("created_at", "")}});
+        save_data("announcements.json", af);
+        respond(res, ok_j());
+    });
+
+    svr.Delete(R"(/api/admin/announcement/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int aid = stoi(req.matches[1].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto af = load_data("announcements.json");
+        auto& anns = af["announcements"];
+        for (size_t i = 0; i < anns.size(); i++)
+            if (anns[i]["id"].get<int>() == aid) {
+                anns.erase(anns.begin() + (long)i);
+                save_data("announcements.json", af);
+                return respond(res, ok_j());
+            }
+        fail(res, 404, "公告不存在");
+    });
+
+    // ========== 管理端：训练 ==========
+    svr.Post("/api/admin/training", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "训练名不能为空");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto tf = load_data("trainings.json");
+        auto& ts = tf["trainings"];
+        ts.insert(ts.begin(), {{"id", next_id(ts)},
+                               {"title", title},
+                               {"description", b.value("description", "")},
+                               {"problem_ids", b.value("problem_ids", json::array())},
+                               {"created_at", b.value("created_at", "")}});
+        save_data("trainings.json", tf);
+        respond(res, ok_j());
+    });
+
+    svr.Delete(R"(/api/admin/training/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int tid = stoi(req.matches[1].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto tf = load_data("trainings.json");
+        auto& ts = tf["trainings"];
+        for (size_t i = 0; i < ts.size(); i++)
+            if (ts[i]["id"].get<int>() == tid) {
+                ts.erase(ts.begin() + (long)i);
+                save_data("trainings.json", tf);
+                return respond(res, ok_j());
+            }
+        fail(res, 404, "训练不存在");
+    });
+
+    // ========== 管理端：班级 ==========
+    svr.Post("/api/admin/class", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string name = b.value("name", "");
+        if (name.empty()) return fail(res, 400, "班级名不能为空");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cf = load_data("classes.json");
+        auto& cs = cf["classes"];
+        cs.insert(cs.begin(), {{"id", next_id(cs)},
+                               {"name", name},
+                               {"description", b.value("description", "")},
+                               {"invite_code", b.value("invite_code", "")},
+                               {"members", json::array()},
+                               {"created_at", b.value("created_at", "")}});
+        save_data("classes.json", cf);
+        respond(res, ok_j());
+    });
+
+    svr.Delete(R"(/api/admin/class/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cf = load_data("classes.json");
+        auto& cs = cf["classes"];
+        for (size_t i = 0; i < cs.size(); i++)
+            if (cs[i]["id"].get<int>() == cid) {
+                cs.erase(cs.begin() + (long)i);
+                save_data("classes.json", cf);
+                return respond(res, ok_j());
+            }
+        fail(res, 404, "班级不存在");
+    });
+
+    // ========== 管理端：商城 ==========
+    svr.Post("/api/admin/shop-item", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        auto b = parse_body(req);
+        string name = b.value("name", "");
+        if (name.empty()) return fail(res, 400, "商品名不能为空");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto sf = load_data("shop.json");
+        auto& items = sf["items"];
+        items.push_back({{"id", next_id(items)},
+                         {"name", name},
+                         {"description", b.value("description", "")},
+                         {"price", b.value("price", 0)},
+                         {"icon", b.value("icon", "🎁")},
+                         {"stock", b.value("stock", 0)}});
+        save_data("shop.json", sf);
+        respond(res, ok_j());
+    });
+
+    svr.Put(R"(/api/admin/shop-item/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int iid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        lock_guard<mutex> lk(g_biz_mu);
+        auto sf = load_data("shop.json");
+        auto& items = sf["items"];
+        for (auto& it : items) {
+            if (it["id"].get<int>() != iid) continue;
+            it["name"]        = b.value("name", it.value("name", ""));
+            it["description"] = b.value("description", it.value("description", ""));
+            it["price"]       = b.value("price", it.value("price", 0));
+            it["icon"]        = b.value("icon", it.value("icon", "🎁"));
+            it["stock"]       = b.value("stock", it.value("stock", 0));
+            save_data("shop.json", sf);
+            return respond(res, ok_j());
+        }
+        fail(res, 404, "商品不存在");
+    });
+
+    svr.Delete(R"(/api/admin/shop-item/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res);
+        if (u.empty()) return;
+        int iid = stoi(req.matches[1].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto sf = load_data("shop.json");
+        auto& items = sf["items"];
+        for (size_t i = 0; i < items.size(); i++)
+            if (items[i]["id"].get<int>() == iid) {
+                items.erase(items.begin() + (long)i);
+                save_data("shop.json", sf);
+                return respond(res, ok_j());
+            }
+        fail(res, 404, "商品不存在");
+    });
+}
+
+// ---------------- 入口 ----------------
+int main() {
+    mkdirs("data");
+    mkdirs(TEMP_DIR);
+    mkdirs("logs");
+
+    // 读取配置（可缺省）
+    json cfg = store::load("server/config.json");
+    string host = cfg.value("host", "0.0.0.0");
+    int port   = cfg.value("port", 8080);
+    string dbh = cfg.value("db_host", "127.0.0.1");
+    int dbp    = cfg.value("db_port", 3306);
+    string dbu = cfg.value("db_user", "root");
+    string dbpwd = cfg.value("db_password", "");
+    string dbn   = cfg.value("db_name", "oj");
+
+    if (!g_db.connect(dbh, dbp, dbu, dbpwd, dbn)) {
+        fprintf(stderr, "[oj] MySQL 连接失败，请检查 server/config.json 与数据库状态\n");
+        return 1;
+    }
+
+    // 自动创建管理员 admin / admin123
+    auto adm = g_db.rows("SELECT id FROM users WHERE username='admin'");
+    if (adm.empty()) {
+        g_db.query("INSERT INTO users(username,password,role) VALUES('admin','" +
+                   Auth::sha256("admin123") + "','admin')");
+        printf("[oj] 已创建管理员账号 admin / admin123\n");
+    }
+
+    httplib::Server svr;
+    svr.set_mount_point("/", "static");   // 前端静态文件
+    register_routes(svr);
+
+    printf("[oj] 比特 OJ 启动: http://%s:%d  (题库=%s, 临时=%s)\n",
+           host.c_str(), port, DATA_DIR.c_str(), TEMP_DIR.c_str());
+    fflush(stdout);
+
+    if (!svr.listen(host.c_str(), port)) {
+        fprintf(stderr, "[oj] 监听失败（端口被占用？）\n");
+        return 1;
+    }
+    return 0;
+}

@@ -1,0 +1,25 @@
+# =============================================
+# 比特 OJ - systemd 服务示例
+# 安装: sudo cp deploy/oj.service /etc/systemd/system/
+#       sudo systemctl daemon-reload
+#       sudo systemctl enable --now oj
+# 查看日志: journalctl -u oj -f
+# =============================================
+[Unit]
+Description=Bit OJ Online Judge Server
+After=network.target mysqld.service
+
+[Service]
+Type=simple
+# 改成你实际的部署目录
+WorkingDirectory=/opt/oj
+ExecStart=/opt/oj/server/oj_server
+Restart=on-failure
+RestartSec=3
+# 建议用普通用户运行（更安全），如: User=ojuser
+# User=ojuser
+# 临时目录必须是服务用户可写的
+ReadWritePaths=/opt/oj/temp /opt/oj/data /opt/oj/logs
+
+[Install]
+WantedBy=multi-user.target
