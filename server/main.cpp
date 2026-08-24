@@ -1132,7 +1132,7 @@ static void register_routes(httplib::Server& svr) {
         {"deepseek", "https://api.deepseek.com", "/chat/completions", "deepseek-chat"},
         {"minimax",  "https://api.minimaxi.com", "/v1/text/chatcompletion_v2", "abab6.5s-chat"},
     };
-    auto ai_prov = [](const string& p, AiProv& out) {
+    auto ai_prov = [&](const string& p, AiProv& out) {
         for (auto& pr : AI_PROVIDERS) if (pr.name == p) { out = pr; return true; }
         return false;
     };
