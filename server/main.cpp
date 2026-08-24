@@ -210,8 +210,9 @@ static void register_routes(httplib::Server& svr) {
             {"color", colors[tier]}, {"label", sub == 3 ? "超凡入圣" : (std::string(names[tier]) + " " + (sub==0?"I":sub==1?"II":"III"))}
         };
     };
+    (void)calc_tier;  // 避免未使用警告（被下面 lambda 用）
 
-    svr.Get("/api/me/profile", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/api/me/profile", [&calc_tier](const httplib::Request& req, httplib::Response& res) {
         auto u = current_user(req);
         if (u.empty()) return fail(res, 401, "未登录");
         long long uid = u["id"].get<long long>();
@@ -230,9 +231,10 @@ static void register_routes(httplib::Server& svr) {
         json user_obj = {{"id", uid}, {"username", u["username"]}, {"role", u["role"]},
                          {"points", points}, {"solved", ac_count}};
         json heat_bd = {{"submissions_7d", sub_total}, {"ac_7d", ac_in_heat}};
-        respond(res, ok_j({{"user", user_obj}, {"signature", signature},
-                           {"tier", calc_tier(ac_count, points)},
-                           {"heat", heat}, {"heat_breakdown", heat_bd}}));
+        json tier_obj = calc_tier(ac_count, points);
+        json resp_obj = {{"user", user_obj}, {"signature", signature},
+                         {"tier", tier_obj}, {"heat", heat}, {"heat_breakdown", heat_bd}};
+        respond(res, ok_j(resp_obj));
     });
 
     svr.Patch("/api/me", [](const httplib::Request& req, httplib::Response& res) {
