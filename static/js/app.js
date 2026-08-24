@@ -1316,7 +1316,26 @@ async function adminAddItem() {
 }
 
 // ---------- 启动 ----------
+// ---------- 黑夜模式 ----------
+function initTheme() {
+  const saved = localStorage.getItem('oj_theme');
+  const dark = saved === 'dark';
+  document.body.classList.toggle('dark', dark);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.textContent = dark ? '☀️' : '🌙';
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest && e.target.closest('#theme-toggle')) {
+    const dark = document.body.classList.toggle('dark');
+    localStorage.setItem('oj_theme', dark ? 'dark' : 'light');
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = dark ? '☀️' : '🌙';
+  }
+});
+
 window.addEventListener('DOMContentLoaded', async () => {
+  initTheme();
   $('confirm-ok').addEventListener('click', () => {
     if (confirmOk) { const cb = confirmOk; cb(); }
     closeConfirmModal();

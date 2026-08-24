@@ -357,3 +357,28 @@ a.link:hover { text-decoration: underline; }
   0%   { transform: translate(0, 0) scale(1);   opacity: 1; }
   100% { transform: translate(var(--dx, 0), -70vh) scale(0.2); opacity: 0; }
 }
+
+/* ---------- 暗色模式 ---------- */
+body.dark {
+  --bg: #0b1220;
+  --card: #131c2e;
+  --nav: #0e1524;
+  --nav-text: #9aa7bd;
+  --text: #e2e8f0;
+  --muted: #8494a8;
+  --border: #263449;
+  color-scheme: dark;
+}
+body.dark .navbar { box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+body.dark th { background: #18233800; }
+body.dark .sample-box { background: #0d1626; border-color: var(--border); color: #d7e0ec; }
+body.dark .editor-wrap { background: #0d1626; border-color: var(--border); }
+body.dark .profile-hero,
+body.dark .note-card,
+body.dark .ai-bot { background: #101a2c; border-color: var(--border); color: var(--text); }
+body.dark .ai-user { background: #2563eb; }
+body.dark .footer { background: #0e1524; border-color: var(--border); color: var(--muted); }
+body.dark a.link { color: #7dd3fc; }
+body.dark .tag { background: #1e293b; color: #c7d2fe; }
+body.dark .progress-bar { background: #1e293b; }
+body.dark .stat-card { background: var(--card); }
