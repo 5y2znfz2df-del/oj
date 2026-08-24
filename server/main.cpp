@@ -176,6 +176,120 @@ static void register_routes(httplib::Server& svr) {
         respond(res, ok_j({{"user", u}}));
     });
 
+    // ========== 个人资料（段位/签名/热度） ==========
+    // 段位计算：RR = AC数*50 + 积分*0.5
+    // 无畏契约国服段位 (9 个)
+    auto calc_tier = [](int ac_count, int points) -> json {
+        int rr = ac_count * 50 + (int)(points * 0.5);
+        const char* names[] = {
+            "无段位", "黑铁", "青铜", "白银", "黄金",
+            "铂金", "钻石", "战神", "不朽", "超凡入圣"
+        };
+        const int thresholds[] = {0, 0, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700};
+        const char* colors[] = {
+            "#9ca3af", "#6b7280", "#a16207", "#94a3b8", "#eab308",
+            "#06b6d4", "#a855f7", "#10b981", "#ef4444", "#fbbf24"
+        };
+        int tier = 0;
+        for (int i = 9; i >= 0; i--) {
+            if (rr >= thresholds[i]) { tier = i; break; }
+        }
+        int sub = 0;
+        if (tier < 9) {
+            int lo = thresholds[tier], hi = thresholds[tier + 1];
+            sub = (hi > lo) ? (int)((rr - lo) * 3.0 / (hi - lo)) : 0;
+            if (sub > 2) sub = 2;
+        } else {
+            sub = 3;  // Radiant 不分子段位
+        }
+        int next_rr = (tier < 9) ? thresholds[tier + 1] : rr;
+        int prev_rr = thresholds[tier];
+        return json{
+            {"tier", tier}, {"name", names[tier]}, {"sub", sub},
+            {"rr", rr}, {"prev_rr", prev_rr}, {"next_rr", next_rr},
+            {"color", colors[tier]}, {"label", sub == 3 ? "超凡入圣" : (std::string(names[tier]) + " " + (sub==0?"I":sub==1?"II":"III"))}
+        };
+    };
+
+    svr.Get("/api/me/profile", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        long long uid = u["id"].get<long long>();
+        auto urows = g_db.rows("SELECT signature FROM users WHERE id=" + to_string(uid));
+        string signature = urows.empty() ? "" : urows[0][0];
+        // 提交热度：近7天提交总数×1 + AC 数×2
+        auto heat_rows = g_db.rows(
+            "SELECT COUNT(*), SUM(status='AC') FROM submissions"
+            " WHERE user_id=" + to_string(uid) +
+            " AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        int sub_total = heat_rows.empty() ? 0 : stoi(heat_rows[0][0]);
+        int ac_in_heat = (heat_rows.empty() || heat_rows[0][1].empty()) ? 0 : stoi(heat_rows[0][1]);
+        int heat = sub_total + ac_in_heat * 2;
+        int ac_count = u["solved_count"].get<int>();
+        int points = u["points"].get<int>();
+        respond(res, ok_j({
+            {"user", {{"id", uid}, {"username", u["username"]}, {"role", u["role"]},
+                       {"points", points}, {"solved", ac_count}}},
+            {"signature", signature},
+            {"tier", calc_tier(ac_count, points)},
+            {"heat", heat},
+            {"heat_breakdown", {{"submissions_7d", sub_total}, {"ac_7d", ac_in_heat}}}
+        }));
+    });
+
+    svr.Patch("/api/me", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        auto b = parse_body(req);
+        if (!b.contains("signature")) return fail(res, 400, "signature 必填");
+        string sig = b["signature"].get<string>();
+        if (sig.size() > 200) sig = sig.substr(0, 200);
+        g_db.query("UPDATE users SET signature='" + g_db.escape(sig) +
+                   "' WHERE id=" + to_string(u["id"].get<long long>()));
+        respond(res, ok_j({{"signature", sig}}));
+    });
+
+    // ========== 题目笔记 ==========
+    svr.Get("/api/me/notes", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        auto rows = g_db.rows("SELECT problem_id, content, updated_at FROM user_notes"
+                              " WHERE user_id=" + to_string(u["id"].get<long long>()) +
+                              " ORDER BY updated_at DESC LIMIT 200");
+        json list = json::array();
+        for (auto& r : rows)
+            list.push_back({{"problem_id", stoi(r[0])}, {"content", r[1]}, {"updated_at", r[2]}});
+        respond(res, ok_j({{"notes", list}}));
+    });
+
+    svr.Put(R"(/api/me/note/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        int pid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        string content = b.value("content", "");
+        long long uid = u["id"].get<long long>();
+        // upsert
+        if (content.empty()) {
+            g_db.query("DELETE FROM user_notes WHERE user_id=" + to_string(uid) +
+                       " AND problem_id=" + to_string(pid));
+            return respond(res, ok_j({{"deleted", true}}));
+        }
+        g_db.query("INSERT INTO user_notes(user_id, problem_id, content) VALUES(" +
+                   to_string(uid) + "," + to_string(pid) + ",'" + g_db.escape(content) + "')"
+                   " ON DUPLICATE KEY UPDATE content='" + g_db.escape(content) + "'");
+        respond(res, ok_j());
+    });
+
+    svr.Delete(R"(/api/me/note/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        int pid = stoi(req.matches[1].str());
+        g_db.query("DELETE FROM user_notes WHERE user_id=" + to_string(u["id"].get<long long>()) +
+                   " AND problem_id=" + to_string(pid));
+        respond(res, ok_j());
+    });
+
     // ========== 题库 ==========
     svr.Get("/api/problems", [](const httplib::Request& req, httplib::Response& res) {
         auto u = current_user(req);
@@ -1038,6 +1152,20 @@ int main() {
 
     // schema 自动迁移：role 字段加 class_admin
     g_db.query("ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','class_admin') NOT NULL DEFAULT 'user'");
+    // schema 自动迁移：users 加 signature 字段（个性化签名）
+    {
+        auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='signature'");
+        if (!chk.empty() && chk[0][0] == "0")
+            g_db.query("ALTER TABLE users ADD COLUMN signature VARCHAR(200) NOT NULL DEFAULT ''");
+    }
+    // schema 自动迁移：题目笔记表 user_notes
+    g_db.query("CREATE TABLE IF NOT EXISTS user_notes ("
+               "user_id BIGINT NOT NULL,"
+               "problem_id INT NOT NULL,"
+               "content MEDIUMTEXT NOT NULL,"
+               "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+               "PRIMARY KEY (user_id, problem_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     httplib::Server svr;
     svr.set_mount_point("/", "static");   // 前端静态文件
