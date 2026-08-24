@@ -227,14 +227,12 @@ static void register_routes(httplib::Server& svr) {
         int heat = sub_total + ac_in_heat * 2;
         int ac_count = u["solved_count"].get<int>();
         int points = u["points"].get<int>();
-        respond(res, ok_j({
-            {"user", {{"id", uid}, {"username", u["username"]}, {"role", u["role"]},
-                       {"points", points}, {"solved", ac_count}}},
-            {"signature", signature},
-            {"tier", calc_tier(ac_count, points)},
-            {"heat", heat},
-            {"heat_breakdown", {{"submissions_7d", sub_total}, {"ac_7d", ac_in_heat}}}
-        }));
+        json user_obj = {{"id", uid}, {"username", u["username"]}, {"role", u["role"]},
+                         {"points", points}, {"solved", ac_count}};
+        json heat_bd = {{"submissions_7d", sub_total}, {"ac_7d", ac_in_heat}};
+        respond(res, ok_j({{"user", user_obj}, {"signature", signature},
+                           {"tier", calc_tier(ac_count, points)},
+                           {"heat", heat}, {"heat_breakdown", heat_bd}}));
     });
 
     svr.Patch("/api/me", [](const httplib::Request& req, httplib::Response& res) {
