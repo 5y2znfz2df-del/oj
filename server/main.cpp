@@ -1011,6 +1011,7 @@ static void register_routes(httplib::Server& svr) {
             const auto& f = req.get_file_value("file");
             if (f.content.size() > 20 * 1024 * 1024) return fail(res, 400, "文件不能超过 20MB");
             mkdirs(files_dir);
+            fprintf(stderr, "[files] DATA_DIR='%s' files_dir='%s'\n", DATA_DIR.c_str(), files_dir.c_str());
             string fid = gen_file_id();
             string path = files_dir + "/" + fid;
             fprintf(stderr, "[files] path=%s size=%zu\n", path.c_str(), f.content.size());
