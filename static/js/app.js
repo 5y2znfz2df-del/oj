@@ -31,7 +31,7 @@ function navUpdate() {
   if (state.user) {
     adminNav.style.display = state.user.role === 'admin' ? '' : 'none';
     el.innerHTML = `
-      <span>👋 <span class="u-name">${escapeHtml(state.user.username)}</span></span>
+      <a href="#/me" style="color:inherit;text-decoration:none"><span class="u-name">👋 ${escapeHtml(state.user.username)}</span></a>
       <span class="pts">⭐ ${state.user.points}</span>
       <button class="btn-link" data-action="logout">退出登录</button>
       <button class="btn-link" data-action="delete-account" style="color:#dc2626">注销账号</button>`;
@@ -68,6 +68,7 @@ function router() {
   else if (section === 'class' && parts[1]) renderClass(parseInt(parts[1]), page);
   else if (section === 'shop') renderShop(page);
   else if (section === 'admin') renderAdmin(page);
+  else if (section === 'me') renderMyProfile(page);
   else page.innerHTML = '<div class="empty">404，页面被婆罗门搬走了。回 <a href="#/problems">题库</a></div>';
   window.scrollTo(0, 0);
 }
@@ -95,6 +96,73 @@ async function renderProblems(page) {
         <tbody>${rows || '<tr><td colspan="4" class="empty">暂无题目，等管理员投喂吧</td></tr>'}</tbody>
       </table>
     </div>`;
+}
+
+// ---------- 个人主页 ----------
+async function renderMyProfile(page) {
+  if (!requireLogin(() => renderMyProfile(page))) return;
+  page.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await API.get('/api/me/profile');
+    const u = data.user, t = data.tier;
+    const subRoman = t.sub === 3 ? '' : ' ' + ['I','II','III'][t.sub];
+    const tierName = t.name + subRoman;
+    const pct = t.next_rr > t.prev_rr ? Math.min(100, Math.round((t.rr - t.prev_rr) * 100 / (t.next_rr - t.prev_rr))) : 100;
+    const progressText = t.next_rr > t.rr ? '还差 ' + (t.next_rr - t.rr) + ' RR 到下一段位' : '已得超凡入圣';
+    const heatColor = data.heat > 20 ? '#ef4444' : data.heat > 5 ? '#f59e0b' : '#94a3b8';
+    page.innerHTML = `
+      <h1 class="page-title">个人主页</h1>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <div style="width:72px;height:72px;border-radius:50%;background:${t.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:bold">${escapeHtml(u.username.charAt(0).toUpperCase())}</div>
+          <div style="flex:1;min-width:200px">
+            <h2 style="margin:0">${escapeHtml(u.username)}</h2>
+            <p style="margin:6px 0;color:#6b7280;font-style:italic">${data.signature ? '"' + escapeHtml(data.signature) + '"' : '（这家伙很懒，什么也没写）'}</p>
+            <span style="background:${t.color};color:#fff;padding:4px 12px;border-radius:12px;font-weight:bold">${escapeHtml(tierName)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🏆 段位进度</h3>
+        <div style="margin:12px 0;height:24px;background:#e5e7eb;border-radius:12px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${t.color};transition:width 0.3s"></div>
+        </div>
+        <p>${t.rr} / ${t.next_rr} RR · ${progressText}</p>
+        <p style="font-size:12px;color:#9ca3af">阈值：黑铁0 · 青铜600 · 白银900 · 黄金1200 · 铂金1500 · 钻石1800 · 战神2100 · 不朽2400 · 超凡入圣2700+</p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+        <div class="stat-card"><div class="num">${u.points}</div><div class="lbl">⭐ 积分</div></div>
+        <div class="stat-card"><div class="num">${u.solved}</div><div class="lbl">✅ AC题数</div></div>
+        <div class="stat-card"><div class="num" style="color:${heatColor}">🔥 ${data.heat}</div><div class="lbl">做题热度(7天)</div></div>
+        <div class="stat-card"><div class="num">${data.heat_breakdown.submissions_7d}</div><div class="lbl">7天提交</div></div>
+      </div>
+
+      <div class="card">
+        <h3>✏️ 修改个性签名</h3>
+        <div style="display:flex;gap:8px">
+          <input id="signature-input" value="${escapeHtml(data.signature)}" placeholder="来一句帅气的个性签名" maxlength="200" style="flex:1">
+          <button class="btn btn-primary" data-action="save-signature">保存</button>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function saveSignature() {
+  const input = $('signature-input');
+  if (!input) return;
+  const sig = input.value.trim();
+  try {
+    await API.patch('/api/me', { signature: sig });
+    alert('✅ 签名已修改');
+    renderMyProfile($('page'));
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 // ---------- 题目详情 + 提交 ----------
@@ -874,6 +942,7 @@ document.addEventListener('click', (e) => {
       break;
 
     case 'admin-add-class': adminAddClass(); break;
+    case 'save-signature': saveSignature(); break;
     case 'admin-add-class-prompt': adminAddClassPrompt(); break;
     case 'change-role': /* select.change 事件处理在下方 */ break;
     case 'admin-del-class':
