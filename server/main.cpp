@@ -998,7 +998,8 @@ static void register_routes(httplib::Server& svr) {
             for (int i = 0; i < 16; i++) ss << std::hex << (file_rd() % 256);
             return ss.str();
         };
-        auto files_dir = DATA_DIR + "/files";
+        std::string files_dir = std::string(DATA_DIR) + "/files";
+        fprintf(stderr, "[init] DATA_DIR.c_str=%p DATA_DIR='%s' files_dir='%s'\n", (void*)DATA_DIR.c_str(), std::string(DATA_DIR).c_str(), files_dir.c_str());
         auto load_files = [&]() {
             auto f = load_data("files.json");
             if (!f.contains("files")) f["files"] = json::array();
