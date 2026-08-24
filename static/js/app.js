@@ -178,6 +178,9 @@ async function renderFiles(page) {
   try {
     const data = await API.get('/api/files');
     const files = data.files || [];
+    const used = data.used || 0;
+    const quota = data.quota || 0;
+    const singleMax = data.single_max || 20*1024*1024;
     const rows = files.length ? '<table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>上传者</th><th>下载</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
       files.map(f => {
         const canDel = state.user && (state.user.role === 'admin' || state.user.username === f.uploaded_by);
@@ -193,12 +196,14 @@ async function renderFiles(page) {
       }).join('') + '</tbody></table>' : '<div class="empty">还没有文件，上传第一个吧</div>';
     page.innerHTML =
       '<h1 class="page-title">📁 网盘</h1>' +
-      '<div class="card"><h3>上传文件（最大 20MB）</h3>' +
+      '<div class="card"><h3>上传文件（最大 ' + formatSize(singleMax) + '）</h3>' +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
           '<input type="file" id="file-input" style="flex:1">' +
           '<button class="btn btn-primary" data-action="upload-file">📤 上传</button>' +
           '<span class="muted" id="upload-status"></span>' +
-        '</div></div>' +
+        '</div>' +
+        '<p class="muted" style="margin-top:6px;font-size:12px">已用 ' + formatSize(used) + ' / ' + formatSize(quota) + '（你的角色：' + (data.role||'user') + '）</p>' +
+        '</div>' +
       '<div class="card"><h3>文件列表 (' + files.length + ')</h3>' + rows + '</div>';
   } catch (e) {
     page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
@@ -210,7 +215,14 @@ async function uploadFile() {
   const input = $('file-input');
   if (!input || !input.files || !input.files[0]) { alert('请先选文件'); return; }
   const file = input.files[0];
-  if (file.size > 20 * 1024 * 1024) { alert('文件不能超过 20MB'); return; }
+  // 检查单文件大小（动态读取 limits）
+  try {
+    const info = await API.get('/api/files');
+    if (file.size > (info.single_max || 20*1024*1024)) {
+      alert('文件超过 ' + formatSize(info.single_max||20*1024*1024) + ' 限制');
+      return;
+    }
+  } catch (e) { /* 取不到 limits 也不挡 */ }
   const status = $('upload-status');
   status.textContent = '上传中…';
   try {
