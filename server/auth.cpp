@@ -1,4 +1,5 @@
 #include "auth.h"
+#include "db.h"
 #include <openssl/sha.h>
 #include <cstdio>
 #include <random>
@@ -22,24 +23,27 @@ static std::string random_token() {
     return ss.str();
 }
 
-std::string Auth::login(const std::string& username, const std::string& role) {
+std::string Auth::login(DB& db, const std::string& username, const std::string& role) {
     std::string tok = random_token();
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        sessions_[tok] = Session{username, role};
-    }
+    db.query("INSERT INTO sessions(token,username,role) VALUES('" +
+             db.escape(tok) + "','" + db.escape(username) + "','" + db.escape(role) + "')");
     return tok;
 }
 
-bool Auth::check(const std::string& token, Session& out) {
-    std::lock_guard<std::mutex> lk(mu_);
-    auto it = sessions_.find(token);
-    if (it == sessions_.end()) return false;
-    out = it->second;
+bool Auth::check(DB& db, const std::string& token, Session& out) {
+    if (token.empty()) return false;
+    // 更新 last_seen 并查会话
+    auto rows = db.rows("SELECT username,role FROM sessions WHERE token='" +
+                        db.escape(token) + "' LIMIT 1");
+    if (rows.empty()) return false;
+    out.username = rows[0][0];
+    out.role = rows[0][1];
+    // 异步刷新 last_seen（失败无所谓）
+    db.query("UPDATE sessions SET last_seen=NOW() WHERE token='" + db.escape(token) + "'");
     return true;
 }
 
-void Auth::logout(const std::string& token) {
-    std::lock_guard<std::mutex> lk(mu_);
-    sessions_.erase(token);
+void Auth::logout(DB& db, const std::string& token) {
+    if (token.empty()) return;
+    db.query("DELETE FROM sessions WHERE token='" + db.escape(token) + "'");
 }

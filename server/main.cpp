@@ -68,7 +68,7 @@ static json current_user(const httplib::Request& req) {
     string tok = bearer_token(req);
     if (tok.empty()) return json();
     Session s;
-    if (!g_auth.check(tok, s)) return json();
+    if (!g_auth.check(g_db, tok, s)) return json();
     auto rows = g_db.rows("SELECT id,username,role,points,solved_count FROM users"
                           " WHERE username='" + g_db.escape(s.username) + "' LIMIT 1");
     if (rows.empty()) return json();
@@ -148,7 +148,7 @@ static void register_routes(httplib::Server& svr) {
         if (!g_db.query("INSERT INTO users(username,password,role) VALUES('" +
                         g_db.escape(name) + "','" + Auth::sha256(pass) + "','user')"))
             return fail(res, 500, "注册失败，请稍后再试");
-        string tok = g_auth.login(name, "user");
+        string tok = g_auth.login(g_db, name, "user");
         respond(res, ok_j({{"token", tok}, {"username", name}, {"role", "user"},
                            {"points", 0}, {"solved_count", 0}}));
     });
@@ -160,13 +160,13 @@ static void register_routes(httplib::Server& svr) {
                            " WHERE username='" + g_db.escape(name) + "' LIMIT 1");
         if (r.empty() || r[0][2] != Auth::sha256(pass))
             return fail(res, 401, "用户名或密码错误");
-        string tok = g_auth.login(r[0][1], r[0][3]);
+        string tok = g_auth.login(g_db, r[0][1], r[0][3]);
         respond(res, ok_j({{"token", tok}, {"username", r[0][1]}, {"role", r[0][3]},
                            {"points", stoi(r[0][4])}, {"solved_count", stoi(r[0][5])}}));
     });
 
     svr.Post("/api/logout", [](const httplib::Request& req, httplib::Response& res) {
-        g_auth.logout(bearer_token(req));
+        g_auth.logout(g_db, bearer_token(req));
         respond(res, ok_j());
     });
 
@@ -1024,6 +1024,11 @@ int main() {
     }
 
     // 自动创建管理员 admin / admin123
+    g_db.query("CREATE TABLE IF NOT EXISTS sessions ("
+               "token VARCHAR(64) PRIMARY KEY, username VARCHAR(64) NOT NULL,"
+               "role VARCHAR(20) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+               "last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+               "INDEX idx_user(username), INDEX idx_seen(last_seen)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     auto adm = g_db.rows("SELECT id FROM users WHERE username='admin'");
     if (adm.empty()) {
         g_db.query("INSERT INTO users(username,password,role) VALUES('admin','" +

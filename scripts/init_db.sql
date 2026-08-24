@@ -5,6 +5,17 @@
 CREATE DATABASE IF NOT EXISTS oj DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE oj;
 
+-- 会话表（token 持久化，避免重启后用户掉线）
+CREATE TABLE IF NOT EXISTS sessions (
+  token       VARCHAR(64) PRIMARY KEY,
+  username    VARCHAR(64) NOT NULL,
+  role        VARCHAR(20) NOT NULL,
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (username),
+  INDEX idx_seen (last_seen)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 用户表（admin 账号由服务启动时自动创建）
 CREATE TABLE IF NOT EXISTS users (
   id           INT AUTO_INCREMENT PRIMARY KEY,
