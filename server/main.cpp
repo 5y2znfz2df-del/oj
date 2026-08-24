@@ -158,14 +158,8 @@ static void register_routes(httplib::Server& svr) {
         string name = b.value("username", ""), pass = b.value("password", "");
         auto r = g_db.rows("SELECT id,username,password,role,points,solved_count FROM users"
                            " WHERE username='" + g_db.escape(name) + "' LIMIT 1");
-        if (r.empty() || r[0][2] != Auth::sha256(pass)) {
-            string db_hash = r.empty() ? "<no user>" : r[0][2];
-            string calced = Auth::sha256(pass);
-            fprintf(stderr, "[login DEBUG] user='%s' db_hash='%s' calc='%s' match=%d\n",
-                    name.c_str(), db_hash.c_str(), calced.c_str(),
-                    (int)(db_hash == calced));
+        if (r.empty() || r[0][2] != Auth::sha256(pass))
             return fail(res, 401, "用户名或密码错误");
-        }
         string tok = g_auth.login(r[0][1], r[0][3]);
         respond(res, ok_j({{"token", tok}, {"username", r[0][1]}, {"role", r[0][3]},
                            {"points", stoi(r[0][4])}, {"solved_count", stoi(r[0][5])}}));
