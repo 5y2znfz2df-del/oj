@@ -750,6 +750,22 @@ static void register_routes(httplib::Server& svr) {
         respond(res, ok_j({{"users", list}}));
     });
 
+    // 批量发放积分（admin）
+    svr.Post("/api/admin/points/grant", [](const httplib::Request& req, httplib::Response& res) {
+        auto me = require_admin(req, res); if (me.empty()) return;
+        auto b = parse_body(req);
+        int points = b.value("points", 0);
+        if (points <= 0) return fail(res, 400, "积分必须大于 0");
+        auto ids = b.value("user_ids", json::array());
+        if (ids.empty()) return fail(res, 400, "请先勾选用户");
+        if (ids.size() > 500) return fail(res, 400, "单次最多 500 人");
+        for (auto& id : ids) {
+            g_db.query("UPDATE users SET points=points+" + to_string(points) +
+                       " WHERE id=" + to_string(id.get<long long>()));
+        }
+        respond(res, ok_j({{"granted", (int)ids.size()}, {"points", points}}));
+    });
+
     // 超级管理员删除用户
     svr.Delete(R"(/api/admin/user/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
         auto me = require_admin(req, res); if (me.empty()) return;

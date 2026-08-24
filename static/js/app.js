@@ -689,13 +689,15 @@ async function renderAdmin(page) {
       <button class="btn" data-action="admin-tab" data-atab="classes">班级</button>
       <button class="btn" data-action="admin-tab" data-atab="shop">商城</button>
       <button class="btn" data-action="admin-tab" data-atab="users">用户与角色</button>
+      <button class="btn" data-action="admin-tab" data-atab="points">⭐ 发放积分</button>
     </div>
     <div class="admin-panel" id="apanel-problems">${adminProblemPanel()}</div>
     <div class="admin-panel" id="apanel-anns">${adminAnnPanel()}</div>
     <div class="admin-panel" id="apanel-trainings">${adminTrainingPanel()}</div>
     <div class="admin-panel" id="apanel-classes">${adminClassPanel()}</div>
     <div class="admin-panel" id="apanel-shop">${adminShopPanel()}</div>
-    <div class="admin-panel" id="apanel-users">${adminUsersPanel()}</div>`;
+    <div class="admin-panel" id="apanel-users">${adminUsersPanel()}</div>
+    <div class="admin-panel" id="apanel-points">${adminPointsPanel()}</div>`;
   switchAdminTab(currentAdminTab);
 }
 
@@ -841,6 +843,49 @@ function adminUsersPanel() {
           </td>
         </tr>`).join('')}
       </tbody></table>
+    </div>`;
+}
+
+async function grantPoints() {
+  const amount = parseInt($('pts-amount').value);
+  if (!amount || amount <= 0) { alert('请输入积分数（大于 0）'); return; }
+  const ids = [];
+  document.querySelectorAll('.pts-chk:checked').forEach(c => ids.push(parseInt(c.dataset.uid)));
+  if (!ids.length) { alert('请先勾选用户'); return; }
+  if (!confirm('确认给 ' + ids.length + ' 位用户每人发放 ' + amount + ' 积分？')) return;
+  const status = $('pts-status');
+  status.textContent = '发放中…';
+  try {
+    const r = await API.post('/api/admin/points/grant', { user_ids: ids, points: amount });
+    status.textContent = '✅ 已给 ' + r.granted + ' 人各发 ' + r.points + ' 积分';
+    await renderAdmin($('page'));
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  }
+}
+
+function adminPointsPanel() {
+  const rows = adminData.users.map(u => `
+    <tr>
+      <td><input type="checkbox" class="pts-chk" data-uid="${u.id}"></td>
+      <td>#${u.id}</td>
+      <td>${escapeHtml(u.username)}</td>
+      <td>${u.role === 'admin' ? '<span class="tag" style="background:#dc2626;color:#fff">管理员</span>' : u.role === 'class_admin' ? '<span class="tag" style="background:#f59e0b;color:#fff">班级管理员</span>' : '<span class="tag">普通</span>'}</td>
+      <td>${u.points}</td>
+    </tr>`).join('');
+  return `
+    <div class="card">
+      <h3>⭐ 批量发放积分</h3>
+      <p class="muted">勾选用户（支持全选），填积分数量，一键发放。排行榜和商城即时生效。</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-sm" data-action="pts-select-all">☑️ 全选</button>
+        <button class="btn btn-sm" data-action="pts-select-none">⬜ 全不选</button>
+        <label style="margin-left:8px">积分数量</label>
+        <input id="pts-amount" type="number" min="1" value="10" style="width:90px">
+        <button class="btn btn-primary" data-action="pts-grant">💰 发放积分</button>
+        <span class="muted" id="pts-status"></span>
+      </div>
+      <table><thead><tr><th>选择</th><th>ID</th><th>用户名</th><th>角色</th><th>当前积分</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 
@@ -1033,6 +1078,13 @@ document.addEventListener('click', (e) => {
     case 'save-signature': saveSignature(); break;
     case 'upload-file': uploadFile(); break;
     case 'del-file': deleteFile(el.dataset.fid); break;
+    case 'pts-select-all':
+      document.querySelectorAll('.pts-chk').forEach(c => c.checked = true);
+      break;
+    case 'pts-select-none':
+      document.querySelectorAll('.pts-chk').forEach(c => c.checked = false);
+      break;
+    case 'pts-grant': grantPoints(); break;
     case 'admin-add-class-prompt': adminAddClassPrompt(); break;
     case 'change-role': /* select.change 事件处理在下方 */ break;
     case 'admin-del-class':
