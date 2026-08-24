@@ -70,6 +70,7 @@ function router() {
   else if (section === 'admin') renderAdmin(page);
   else if (section === 'files') renderFiles(page);
   else if (section === 'me') renderMyProfile(page);
+  else if (section === 'ai') renderAiChat(page);
   else page.innerHTML = '<div class="empty">404，页面被婆罗门搬走了。回 <a href="#/problems">题库</a></div>';
   window.scrollTo(0, 0);
 }
@@ -147,10 +148,109 @@ async function renderMyProfile(page) {
           <button class="btn btn-primary" data-action="save-signature">保存</button>
         </div>
       </div>
+      <div class="card">
+        <h3>🤖 AI 助手设置</h3>
+        <p class="muted">填入你自己的 AI API Key（支持 DeepSeek 等 OpenAI 兼容服务），就可以在『AI 助手』里使用，费用由你的 Key 计费，不走积分。</p>
+        <div style="display:flex;gap:8px">
+          <input id="ai-key-input" type="password" value="" placeholder="sk-... 你的 API Key" style="flex:1">
+          <button class="btn btn-primary" data-action="save-ai-key">保存 Key</button>
+          <button class="btn" data-action="clear-ai-key">清除</button>
+        </div>
+        <p class="muted" id="ai-key-status" style="margin-top:6px;font-size:12px"></p>
+      </div>
     `;
+    // 加载 AI key 状态
+    try {
+      const st = await API.get('/api/ai/status');
+      const el = document.getElementById('ai-key-status');
+      if (el) el.textContent = st.configured ? '✅ 已配置 API Key（' + st.model + '）' : '⚠️ 尚未配置 API Key';
+    } catch (e) { /* 忽略 */ }
   } catch (e) {
     page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
   }
+}
+
+async function renderAiChat(page) {
+  if (!requireLogin(() => renderAiChat(page))) return;
+  page.innerHTML = `
+    <h1 class="page-title">🤖 AI 助手</h1>
+    <div class="card" id="ai-chat-box" style="height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:14px">
+      <div class="ai-msg ai-bot">你好！我是比特 OJ 的 AI 助手，可以帮你解答 C++ / 算法问题。先在「个人主页 → AI助手设置」填入你自己的 API Key 哦。</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input id="ai-input" placeholder="问点什么…（比如：解释什么是递归）" style="flex:1;padding:10px" onkeydown="if(event.key==='Enter'){aiSend();}">
+      <button class="btn btn-primary" data-action="ai-send">发送</button>
+    </div>
+    <p class="muted" id="ai-status" style="margin-top:6px;font-size:12px"></p>
+  `;
+  // 显示配置状态
+  try {
+    const st = await API.get('/api/ai/status');
+    if (!st.configured) {
+      addAiMsg('⚠️ 你还没配置 API Key，去 <a href="#/me">个人主页 → AI 助手设置</a> 里填入吧。', 'ai-bot');
+    }
+  } catch (e) { /* 忽略 */ }
+  window.__aiInputEl = document.getElementById('ai-input');
+}
+
+function addAiMsg(text, cls) {
+  const box = document.getElementById('ai-chat-box');
+  if (!box) return;
+  const d = document.createElement('div');
+  d.className = 'ai-msg ' + (cls || 'ai-bot');
+  d.innerHTML = text;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function aiSend() {
+  const input = document.getElementById('ai-input');
+  if (!input) return;
+  const msg = input.value.trim();
+  if (!msg) return;
+  addAiMsg(escapeHtml(msg), 'ai-user');
+  input.value = '';
+  addAiMsg('思考中…', 'ai-bot');
+  const status = $('ai-status');
+  status.textContent = '';
+  try {
+    const r = await API.post('/api/ai/chat', { message: msg });
+    // 替换最后一条“思考中”为回答
+    const box = document.getElementById('ai-chat-box');
+    const last = box ? box.querySelector('.ai-msg:last-child') : null;
+    if (last && last.textContent === '思考中…') {
+      last.innerHTML = escapeHtml(r.reply).replace(/\n/g, '<br>');
+    } else {
+      addAiMsg(escapeHtml(r.reply).replace(/\n/g, '<br>'), 'ai-bot');
+    }
+    status.textContent = '本次消耗约 ' + r.used + ' token（费用由你的 Key 计费）';
+  } catch (e) {
+    const box = document.getElementById('ai-chat-box');
+    const last = box ? box.querySelector('.ai-msg:last-child') : null;
+    if (last && last.textContent === '思考中…') last.remove();
+    addAiMsg('❌ ' + escapeHtml(e.message), 'ai-bot');
+  }
+}
+
+async function saveAiKey() {
+  const input = $('ai-key-input');
+  if (!input) return;
+  const key = input.value.trim();
+  if (!key) { alert('请输入 API Key'); return; }
+  try {
+    await API.patch('/api/ai/key', { api_key: key });
+    alert('✅ API Key 已保存');
+    input.value = '';
+    renderMyProfile($('page'));
+  } catch (e) { alert(e.message); }
+}
+
+async function clearAiKey() {
+  try {
+    await API.patch('/api/ai/key', { api_key: '' });
+    alert('API Key 已清除');
+    renderMyProfile($('page'));
+  } catch (e) { alert(e.message); }
 }
 
 async function saveSignature() {
@@ -1076,6 +1176,9 @@ document.addEventListener('click', (e) => {
 
     case 'admin-add-class': adminAddClass(); break;
     case 'save-signature': saveSignature(); break;
+    case 'save-ai-key': saveAiKey(); break;
+    case 'clear-ai-key': clearAiKey(); break;
+    case 'ai-send': aiSend(); break;
     case 'upload-file': uploadFile(); break;
     case 'del-file': deleteFile(el.dataset.fid); break;
     case 'pts-select-all':
