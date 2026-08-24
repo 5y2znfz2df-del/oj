@@ -15,7 +15,7 @@ bool DB::reconnect() {
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }
     conn_ = mysql_init(nullptr);
     if (!conn_) return false;
-    my_bool reconnect_opt = 1;
+    char reconnect_opt = 1;
     mysql_options(conn_, MYSQL_OPT_RECONNECT, &reconnect_opt);
     mysql_options(conn_, MYSQL_SET_CHARSET_NAME, "utf8mb4");
     if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(), pass_.c_str(),
