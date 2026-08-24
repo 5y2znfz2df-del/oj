@@ -1178,9 +1178,10 @@ static void register_routes(httplib::Server& svr) {
         string api_key = cfg.value("ai", json::object()).value("api_key", "");
         if (api_key.empty()) return fail(res, 500, "AI 未配置（管理员需在 config.json 设置 ai.api_key）");
         // 组装请求体
-        json payload = {{"model", AI_MODEL}, {"stream", false},
-            {"messages", json::array({{{"role", "system"}, {"content", "你是比特 OJ 的 AI 助手，帮助 C++ 学习者解答编程问题。回答简洁清晰，可以给代码示例。"}},
-                                       {{"role", "user"}, {"content", msg}}})}};
+        json sys_msg = {{"role", "system"}, {"content", "你是比特 OJ 的 AI 助手，帮助 C++ 学习者解答编程问题。回答简洁清晰，可以给代码示例。"}};
+        json usr_msg = {{"role", "user"}, {"content", msg}};
+        json msgs = json::array(); msgs.push_back(sys_msg); msgs.push_back(usr_msg);
+        json payload = {{"model", AI_MODEL}, {"stream", false}, {"messages", msgs}};
         // 用 httplib 调 DeepSeek API
         httplib::Client cli("https://api.deepseek.com");
         cli.set_connection_timeout(10, 0);
