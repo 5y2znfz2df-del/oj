@@ -1129,11 +1129,12 @@ static void register_routes(httplib::Server& svr) {
 
     // ========== AI 助手（用户自带 API Key，多平台） ==========
     struct AiProv { string name, base, path, model; };
-    const AiProv AI_PROVIDERS[] = {
+    // 注意：必须 static，否则 register_routes 返回后悬垂，handler 调用时段错误
+    static const AiProv AI_PROVIDERS[] = {
         {"deepseek", "https://api.deepseek.com", "/chat/completions", "deepseek-chat"},
         {"minimax",  "https://api.minimaxi.com", "/v1/text/chatcompletion_v2", "abab6.5s-chat"},
     };
-    auto ai_prov = [&](const string& p, AiProv& out) {
+    static auto ai_prov = [](const string& p, AiProv& out) {
         for (auto& pr : AI_PROVIDERS) if (pr.name == p) { out = pr; return true; }
         return false;
     };
