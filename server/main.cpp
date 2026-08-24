@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -986,6 +988,103 @@ static void register_routes(httplib::Server& svr) {
             }
         fail(res, 404, "公告不存在");
     });
+
+    // ========== 网盘 ==========
+    // 文件存 DATA_DIR/files/{id}.bin，元数据存 DATA_DIR/files.json
+    {
+        static std::random_device file_rd;
+        auto gen_file_id = [&]() {
+            std::stringstream ss;
+            for (int i = 0; i < 16; i++) ss << std::hex << (file_rd() % 256);
+            return ss.str();
+        };
+        auto files_dir = DATA_DIR + "/files";
+        auto load_files = [&]() {
+            auto f = load_data("files.json");
+            if (!f.contains("files")) f["files"] = json::array();
+            return f;
+        };
+
+        svr.Post("/api/files/upload", [&files_dir, &gen_file_id, &load_files](const httplib::Request& req, httplib::Response& res) {
+            auto u = require_user(req, res); if (u.empty()) return;
+            if (!req.has_file("file")) return fail(res, 400, "未选择文件");
+            auto& f = req.get_file_value("file");
+            if (f.content.size() > 20 * 1024 * 1024) return fail(res, 400, "文件不能超过 20MB");
+            mkdirs(files_dir);
+            string fid = gen_file_id();
+            string path = files_dir + "/" + fid;
+            std::ofstream out(path, std::ios::binary);
+            if (!out) return fail(res, 500, "写入失败");
+            out.write(f.content.data(), f.content.size());
+            out.close();
+            // 写元数据
+            auto mf = load_files();
+            time_t now = time(nullptr); struct tm tm; localtime_r(&now, &tm);
+            char ts[32]; strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
+            mf["files"].push_back({
+                {"id", fid}, {"filename", f.filename},
+                {"size", (long long)f.content.size()},
+                {"uploaded_by", u["username"]},
+                {"uploaded_at", ts},
+                {"downloads", 0}
+            });
+            save_data("files.json", mf);
+            respond(res, ok_j({{"id", fid}, {"filename", f.filename}, {"size", (long long)f.content.size()}}));
+        });
+
+        svr.Get("/api/files", [&load_files](const httplib::Request& req, httplib::Response& res) {
+            (void)req;
+            auto mf = load_files();
+            respond(res, ok_j({{"files", mf["files"]}}));
+        });
+
+        svr.Get(R"(/api/files/(\w+)/download)", [&load_files](const httplib::Request& req, httplib::Response& res) {
+            string fid = req.matches[1].str();
+            auto mf = load_files();
+            for (auto& f : mf["files"]) {
+                if (f.value("id", "") != fid) continue;
+                string path = DATA_DIR + "/files/" + fid;
+                std::ifstream in(path, std::ios::binary);
+                if (!in) return fail(res, 404, "文件丢失");
+                std::stringstream ss; ss << in.rdbuf();
+                // 下载次数+1
+                f["downloads"] = f.value("downloads", 0).get<int>() + 1;
+                save_data("files.json", mf);
+                // 处理中文文件名：URL encode + RFC 5987
+                string name = f.value("filename", fid);
+                string safe_name; for (char c : name) { if (c < 0x20 || c == '"' || c == '\\') c = '_'; safe_name += c; }
+                string encoded = "";
+                for (unsigned char c : name) {
+                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') encoded += c;
+                    else { char buf[8]; snprintf(buf, sizeof(buf), "%%%02X", c); encoded += buf; }
+                }
+                res.set_header("Content-Disposition",
+                    "attachment; filename=\"" + safe_name + "\"; filename*=UTF-8''" + encoded);
+                res.set_content(ss.str(), "application/octet-stream");
+                return;
+            }
+            fail(res, 404, "文件不存在");
+        });
+
+        svr.Delete(R"(/api/files/(\w+))", [&load_files](const httplib::Request& req, httplib::Response& res) {
+            auto u = require_user(req, res); if (u.empty()) return;
+            string fid = req.matches[1].str();
+            auto mf = load_files();
+            auto& files = mf["files"];
+            for (size_t i = 0; i < files.size(); i++) {
+                if (files[i].value("id", "") != fid) continue;
+                string role = u.value("role", "");
+                string uname = u.value("username", "");
+                if (files[i].value("uploaded_by", "") != uname && role != "admin")
+                    return fail(res, 403, "只能删除自己上传的文件");
+                remove((DATA_DIR + "/files/" + fid).c_str());
+                files.erase(files.begin() + (long)i);
+                save_data("files.json", mf);
+                return respond(res, ok_j());
+            }
+            fail(res, 404, "文件不存在");
+        });
+    }
 
     // ========== 管理端：训练 ==========
     svr.Post("/api/admin/training", [](const httplib::Request& req, httplib::Response& res) {
