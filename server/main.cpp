@@ -1048,7 +1048,7 @@ static void register_routes(httplib::Server& svr) {
                 if (!in) return fail(res, 404, "文件丢失");
                 std::stringstream ss; ss << in.rdbuf();
                 // 下载次数+1
-                f["downloads"] = f.value("downloads", 0).get<int>() + 1;
+                f["downloads"] = f.value("downloads", 0).template get<int>() + 1;
                 save_data("files.json", mf);
                 // 处理中文文件名：URL encode + RFC 5987
                 string name = f.value("filename", fid);
