@@ -382,3 +382,23 @@ body.dark a.link { color: #7dd3fc; }
 body.dark .tag { background: #1e293b; color: #c7d2fe; }
 body.dark .progress-bar { background: #1e293b; }
 body.dark .stat-card { background: var(--card); }
+
+/* ---------- 暗色模式修复 ---------- */
+body.dark input,
+body.dark textarea,
+body.dark select {
+  color: var(--text);
+  background: #0d1626;
+}
+body.dark input::placeholder,
+body.dark textarea::placeholder { color: #64748b; }
+
+/* 导航不换行：选项多时横向滚动 */
+.nav-inner { flex-wrap: nowrap; }
+.nav-links {
+  flex: 1;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-links::-webkit-scrollbar { display: none; }
