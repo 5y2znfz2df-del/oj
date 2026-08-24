@@ -33,7 +33,8 @@ function navUpdate() {
     el.innerHTML = `
       <span>👋 <span class="u-name">${escapeHtml(state.user.username)}</span></span>
       <span class="pts">⭐ ${state.user.points}</span>
-      <button class="btn-link" data-action="logout">退出登录</button>`;
+      <button class="btn-link" data-action="logout">退出登录</button>
+      <button class="btn-link" data-action="delete-account" style="color:#dc2626">注销账号</button>`;
   } else {
     adminNav.style.display = 'none';
     el.innerHTML = '<button class="btn btn-primary btn-sm" data-action="show-login">登录 / 注册</button>';
@@ -680,6 +681,7 @@ function adminUsersPanel() {
               <option value="class_admin" ${u.role==='class_admin'?'selected':''}>班级管理员</option>
               <option value="admin" ${u.role==='admin'?'selected':''}>超级管理员</option>
             </select>
+            <button class="btn btn-danger btn-sm" data-action="admin-del-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}" style="margin-left:6px">删除</button>
           </td>
         </tr>`).join('')}
       </tbody></table>
@@ -810,6 +812,19 @@ document.addEventListener('click', (e) => {
       refreshUser();
       break;
 
+    case 'delete-account':
+      openConfirmModal('⚠️ 确定注销账号吗？\n此操作不可恢复：你的提交记录、积分、所在班级成员身份都将被清除。', async () => {
+        try {
+          await API.post('/api/account/delete');
+          alert('账号已注销');
+          API.setToken('');
+          state.user = null;
+          location.hash = '#/problems';
+          refreshUser();
+        } catch (err) { alert(err.message); }
+      });
+      break;
+
     case 'submit-code': submitCode(parseInt(el.dataset.id)); break;
     case 'buy-item': buyItem(parseInt(el.dataset.id)); break;
     case 'join-class': joinClass(parseInt(el.dataset.id), el.dataset.code); break;
@@ -837,6 +852,12 @@ document.addEventListener('click', (e) => {
       break;
 
     case 'admin-add-ann': adminAddAnn(); break;
+    case 'admin-del-user':
+      openConfirmModal('确定删除用户『' + el.dataset.username + '』吗？此操作不可恢复！', async () => {
+        try { await API.del('/api/admin/user/' + el.dataset.id); await renderAdmin($('page')); }
+        catch (err) { alert(err.message); }
+      });
+      break;
     case 'admin-del-ann':
       openConfirmModal('确定删除这条公告吗？', async () => {
         try { await API.del('/api/admin/announcement/' + el.dataset.id); await renderAdmin($('page')); }
