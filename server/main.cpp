@@ -1127,15 +1127,16 @@ static void register_routes(httplib::Server& svr) {
     }
 
     // ========== AI 助手（用户自带 API Key） ==========
-    const string AI_API_BASE = "https://api.deepseek.com";
-    const string AI_MODEL   = "deepseek-chat";
+    static const string AI_MODEL_ = "deepseek-chat";  // static → lambda 无需捕获
+    static const string AI_BASE_  = "https://api.deepseek.com";
 
     // 查询是否已配置 AI key（不返回 key 本体）
     svr.Get("/api/ai/status", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto rows = g_db.rows("SELECT ai_api_key FROM users WHERE id=" + to_string(u["id"].get<long long>()));
         string key = rows.empty() ? "" : rows[0][0];
-        respond(res, ok_j({{"configured", !key.empty()}, {"model", AI_MODEL}}));
+        json st = {{"configured", !key.empty()}, {"model", AI_MODEL_}};
+        respond(res, ok_j(st));
     });
 
     // 保存/清空用户自己的 API Key
@@ -1163,8 +1164,8 @@ static void register_routes(httplib::Server& svr) {
         json sys_msg = {{"role", "system"}, {"content", "你是比特 OJ 的 AI 助手，帮助 C++ 学习者解答编程问题。回答简洁清晰，可以给代码示例。"}};
         json usr_msg = {{"role", "user"}, {"content", msg}};
         json msgs = json::array(); msgs.push_back(sys_msg); msgs.push_back(usr_msg);
-        json payload = {{"model", AI_MODEL}, {"stream", false}, {"messages", msgs}};
-        httplib::Client cli(AI_API_BASE);
+        json payload = {{"model", AI_MODEL_}, {"stream", false}, {"messages", msgs}};
+        httplib::Client cli(AI_BASE_);
         cli.set_connection_timeout(10, 0);
         cli.set_read_timeout(60, 0);
         httplib::Headers hdrs = {{"Content-Type", "application/json"},
@@ -1181,7 +1182,8 @@ static void register_routes(httplib::Server& svr) {
         if (choices.empty()) return fail(res, 502, "AI 无返回");
         string reply = choices[0].value("message", json::object()).value("content", "");
         long long used = respj.value("usage", json::object()).value("total_tokens", 0);
-        respond(res, ok_j({{"reply", reply}, {"used", used}}));
+        json chat_r = {{"reply", reply}, {"used", used}};
+        respond(res, ok_j(chat_r));
     });
 
     // ========== 管理端：训练 ==========
