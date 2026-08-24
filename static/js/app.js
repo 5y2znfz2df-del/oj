@@ -68,6 +68,7 @@ function router() {
   else if (section === 'class' && parts[1]) renderClass(parseInt(parts[1]), page);
   else if (section === 'shop') renderShop(page);
   else if (section === 'admin') renderAdmin(page);
+  else if (section === 'files') renderFiles(page);
   else if (section === 'me') renderMyProfile(page);
   else page.innerHTML = '<div class="empty">404，页面被婆罗门搬走了。回 <a href="#/problems">题库</a></div>';
   window.scrollTo(0, 0);
@@ -160,6 +161,81 @@ async function saveSignature() {
     await API.patch('/api/me', { signature: sig });
     alert('✅ 签名已修改');
     renderMyProfile($('page'));
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---------- 网盘 ----------
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+async function renderFiles(page) {
+  page.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await API.get('/api/files');
+    const files = data.files || [];
+    const rows = files.length ? '<table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>上传者</th><th>下载</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
+      files.map(f => {
+        const canDel = state.user && (state.user.role === 'admin' || state.user.username === f.uploaded_by);
+        return '<tr>' +
+          '<td>' + escapeHtml(f.filename) + '</td>' +
+          '<td>' + formatSize(f.size) + '</td>' +
+          '<td>' + escapeHtml(f.uploaded_by) + '</td>' +
+          '<td>' + (f.downloads || 0) + '</td>' +
+          '<td class="muted">' + escapeHtml(f.uploaded_at) + '</td>' +
+          '<td><a class="btn btn-sm" href="/api/files/' + f.id + '/download" download>⬇️ 下载</a>' +
+          (canDel ? ' <button class="btn btn-danger btn-sm" data-action="del-file" data-fid="' + f.id + '">删除</button>' : '') +
+          '</td></tr>';
+      }).join('') + '</tbody></table>' : '<div class="empty">还没有文件，上传第一个吧</div>';
+    page.innerHTML =
+      '<h1 class="page-title">📁 网盘</h1>' +
+      '<div class="card"><h3>上传文件（最大 20MB）</h3>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<input type="file" id="file-input" style="flex:1">' +
+          '<button class="btn btn-primary" data-action="upload-file">📤 上传</button>' +
+          '<span class="muted" id="upload-status"></span>' +
+        '</div></div>' +
+      '<div class="card"><h3>文件列表 (' + files.length + ')</h3>' + rows + '</div>';
+  } catch (e) {
+    page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function uploadFile() {
+  if (!requireLogin(() => uploadFile())) return;
+  const input = $('file-input');
+  if (!input || !input.files || !input.files[0]) { alert('请先选文件'); return; }
+  const file = input.files[0];
+  if (file.size > 20 * 1024 * 1024) { alert('文件不能超过 20MB'); return; }
+  const status = $('upload-status');
+  status.textContent = '上传中…';
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/files/upload', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + API.token },
+      body: fd
+    });
+    const d = await r.json();
+    if (!r.ok || d.ok === false) throw new Error(d.msg || ('上传失败 ' + r.status));
+    status.textContent = '✅ ' + file.name + ' 上传成功';
+    input.value = '';
+    renderFiles($('page'));
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  }
+}
+
+async function deleteFile(fid) {
+  if (!confirm('确定删除这个文件？')) return;
+  try {
+    await API.del('/api/files/' + fid);
+    renderFiles($('page'));
   } catch (e) {
     alert(e.message);
   }
@@ -943,6 +1019,8 @@ document.addEventListener('click', (e) => {
 
     case 'admin-add-class': adminAddClass(); break;
     case 'save-signature': saveSignature(); break;
+    case 'upload-file': uploadFile(); break;
+    case 'del-file': deleteFile(el.dataset.fid); break;
     case 'admin-add-class-prompt': adminAddClassPrompt(); break;
     case 'change-role': /* select.change 事件处理在下方 */ break;
     case 'admin-del-class':
