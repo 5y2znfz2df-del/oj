@@ -1126,63 +1126,83 @@ static void register_routes(httplib::Server& svr) {
         });
     }
 
-    // ========== AI 助手（用户自带 API Key） ==========
-    static const string AI_MODEL_ = "deepseek-chat";  // static → lambda 无需捕获
-    static const string AI_BASE_  = "https://api.deepseek.com";
+    // ========== AI 助手（用户自带 API Key，多平台） ==========
+    struct AiProv { string name, base, path, model; };
+    const AiProv AI_PROVIDERS[] = {
+        {"deepseek", "https://api.deepseek.com", "/chat/completions", "deepseek-chat"},
+        {"minimax",  "https://api.minimaxi.com", "/v1/text/chatcompletion_v2", "abab6.5s-chat"},
+    };
+    auto ai_prov = [](const string& p, AiProv& out) {
+        for (auto& pr : AI_PROVIDERS) if (pr.name == p) { out = pr; return true; }
+        return false;
+    };
 
-    // 查询是否已配置 AI key（不返回 key 本体）
-    svr.Get("/api/ai/status", [](const httplib::Request& req, httplib::Response& res) {
+    // 查询是否已配置 AI key（不返回 key 本体）+ 当前平台
+    svr.Get("/api/ai/status", [&ai_prov](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
-        auto rows = g_db.rows("SELECT ai_api_key FROM users WHERE id=" + to_string(u["id"].get<long long>()));
+        auto rows = g_db.rows("SELECT ai_api_key, ai_provider FROM users WHERE id=" + to_string(u["id"].get<long long>()));
         string key = rows.empty() ? "" : rows[0][0];
-        json st = {{"configured", !key.empty()}, {"model", AI_MODEL_}};
+        string prov = rows.empty() ? "deepseek" : rows[0][1];
+        AiProv pv; string model = ""; if (ai_prov(prov, pv)) model = pv.model;
+        json st = {{"configured", !key.empty()}, {"provider", prov}, {"model", model}};
         respond(res, ok_j(st));
     });
 
-    // 保存/清空用户自己的 API Key
+    // 保存/清空用户自己的 API Key + 平台
     svr.Patch("/api/ai/key", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto b = parse_body(req);
         string key = b.value("api_key", "");
         if (key.size() > 256) key = key.substr(0, 256);
+        string prov = b.value("provider", "deepseek");
+        if (prov != "deepseek" && prov != "minimax") prov = "deepseek";
         g_db.query("UPDATE users SET ai_api_key='" + g_db.escape(key) +
+                   "', ai_provider='" + g_db.escape(prov) +
                    "' WHERE id=" + to_string(u["id"].get<long long>()));
-        respond(res, ok_j({{"configured", !key.empty()}}));
+        json r2 = {{"configured", !key.empty()}, {"provider", prov}};
+        respond(res, ok_j(r2));
     });
 
-    // AI 对话（费用走用户自己的 key）
-    svr.Post("/api/ai/chat", [](const httplib::Request& req, httplib::Response& res) {
+    // AI 对话（费用走用户自己的 key，按平台调用）
+    svr.Post("/api/ai/chat", [&ai_prov](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto b = parse_body(req);
         string msg = b.value("message", "");
         if (msg.empty()) return fail(res, 400, "消息不能为空");
         if (msg.size() > 4000) return fail(res, 400, "消息过长（≤4000 字）");
-        auto rows = g_db.rows("SELECT ai_api_key FROM users WHERE id=" + to_string(u["id"].get<long long>()));
+        auto rows = g_db.rows("SELECT ai_api_key, ai_provider FROM users WHERE id=" + to_string(u["id"].get<long long>()));
         string api_key = rows.empty() ? "" : rows[0][0];
+        string prov = rows.empty() ? "" : rows[0][1];
         if (api_key.empty()) return fail(res, 400, "请先在【个人主页→设置】里填入你自己的 API Key");
-        // 组装请求体
+        AiProv pv; if (!ai_prov(prov, pv)) return fail(res, 400, "未知 AI 平台");
+        // 组装请求体（OpenAI 兼容 messages 格式）
         json sys_msg = {{"role", "system"}, {"content", "你是比特 OJ 的 AI 助手，帮助 C++ 学习者解答编程问题。回答简洁清晰，可以给代码示例。"}};
         json usr_msg = {{"role", "user"}, {"content", msg}};
         json msgs = json::array(); msgs.push_back(sys_msg); msgs.push_back(usr_msg);
-        json payload = {{"model", AI_MODEL_}, {"stream", false}, {"messages", msgs}};
-        httplib::Client cli(AI_BASE_);
+        json payload = {{"model", pv.model}, {"stream", false}, {"messages", msgs}};
+        httplib::Client cli(pv.base);
         cli.set_connection_timeout(10, 0);
-        cli.set_read_timeout(60, 0);
+        cli.set_read_timeout(120, 0);
         httplib::Headers hdrs = {{"Content-Type", "application/json"},
                                 {"Authorization", "Bearer " + api_key}};
-        auto r = cli.Post("/chat/completions", hdrs, payload.dump(), "application/json");
+        auto r = cli.Post(pv.path, hdrs, payload.dump(), "application/json");
         if (!r) return fail(res, 502, "AI 服务不可达");
         json respj;
         try { respj = json::parse(r->body); } catch (...) { return fail(res, 502, "AI 返回异常"); }
         if (r->status != 200) {
             string em = respj.value("error", json::object()).value("message", "AI 错误");
+            if (em.empty()) em = "AI 返回 " + to_string(r->status);
             return fail(res, 502, em);
         }
         auto choices = respj.value("choices", json::array());
         if (choices.empty()) return fail(res, 502, "AI 无返回");
         string reply = choices[0].value("message", json::object()).value("content", "");
+        if (reply.empty()) {
+            // MiniMax 的 chatcompletion_v2 用 "reply" 字段
+            reply = choices[0].value("reply", "");
+        }
         long long used = respj.value("usage", json::object()).value("total_tokens", 0);
-        json chat_r = {{"reply", reply}, {"used", used}};
+        json chat_r = {{"reply", reply}, {"used", used}, {"provider", prov}};
         respond(res, ok_j(chat_r));
     });
 
@@ -1364,6 +1384,13 @@ int main() {
                               " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='ai_api_key'");
         if (!chk.empty() && chk[0][0] == "0")
             g_db.query("ALTER TABLE users ADD COLUMN ai_api_key VARCHAR(256) NOT NULL DEFAULT ''");
+    }
+    // schema 自动迁移：users 加 ai_provider（ai 平台：deepseek / minimax）
+    {
+        auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='ai_provider'");
+        if (!chk.empty() && chk[0][0] == "0")
+            g_db.query("ALTER TABLE users ADD COLUMN ai_provider VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
     }
     // schema 自动迁移：题目笔记表 user_notes
     g_db.query("CREATE TABLE IF NOT EXISTS user_notes ("
