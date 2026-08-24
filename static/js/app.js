@@ -409,12 +409,48 @@ async function submitCode(pid) {
         ${r.detail ? `<div class="detail-box">${escapeHtml(r.detail)}</div>` : ''}
         ${r.status === 'AC' ? '<div class="muted" style="margin-top:8px">🎉 AC！+10 积分到手（首 AC）。</div>' : ''}
       </div>`;
+    if (r.status === 'AC') showAcAnimation();
     await refreshUser();
   } catch (e) {
     panel.innerHTML = `<div class="detail-box">${escapeHtml(e.message)}</div>`;
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// ---------- AC 动画（苹果风全屏庆祝） ----------
+function showAcAnimation() {
+  // 防止重复触发
+  if (document.getElementById('ac-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'ac-overlay';
+  overlay.innerHTML =
+    '<div class="ac-ring"></div>' +
+    '<div class="ac-ring ac-ring-2"></div>' +
+    '<div class="ac-big">ACCEPTED</div>' +
+    '<div class="ac-sub">꒰ঌ Accepted! ✨ 比特 OJ 判定通过 ໒꒱</div>' +
+    '<div class="ac-particles"></div>';
+  document.body.appendChild(overlay);
+
+  // 生成 26 个光点粒子
+  const parts = overlay.querySelector('.ac-particles');
+  for (let i = 0; i < 26; i++) {
+    const p = document.createElement('span');
+    p.className = 'ac-particle';
+    p.style.left = (50 + (Math.random() * 60 - 30)) + '%';
+    p.style.top = 50 + '%';
+    p.style.background = Math.random() > 0.5 ? '#4ade80' : '#a3e635';
+    p.style.setProperty('--dx', ((Math.random() * 120 - 60)) + 'px');
+    p.style.animationDelay = (Math.random() * 0.6) + 's';
+    p.style.animationDuration = (1.4 + Math.random() * 1.2) + 's';
+    parts.appendChild(p);
+  }
+
+  // 2.9 秒后自动淡出移除
+  setTimeout(() => {
+    overlay.classList.add('ac-fade');
+    setTimeout(() => overlay.remove(), 700);
+  }, 2900);
 }
 
 // ---------- 提交记录 ----------
