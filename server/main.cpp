@@ -89,6 +89,15 @@ static json require_admin(const httplib::Request& req, httplib::Response& res) {
     return u;
 }
 
+// 班级管理员：超级管理员(admin) 或 班级管理员(class_admin) 都过
+static json require_class_admin(const httplib::Request& req, httplib::Response& res) {
+    auto u = require_user(req, res);
+    if (u.empty()) return json();
+    string r = u.value("role", "");
+    if (r != "admin" && r != "class_admin") { fail(res, 403, "需要班级管理员权限"); return json(); }
+    return u;
+}
+
 // ---------------- 数据文件访问 ----------------
 static json load_data(const string& name) { return store::load(DATA_DIR + "/" + name); }
 static void save_data(const string& name, const json& j) { store::save(DATA_DIR + "/" + name, j); }
@@ -431,7 +440,7 @@ static void register_routes(httplib::Server& svr) {
 
     // POST /api/admin/class/{id}/problem 添加题目到班级题库
     svr.Post(R"(/api/admin/class/(\d+)/problem)", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str());
         auto b = parse_body(req);
         int pid = b.value("problem_id", 0);
@@ -451,7 +460,7 @@ static void register_routes(httplib::Server& svr) {
 
     // DELETE /api/admin/class/{id}/problem/{pid}
     svr.Delete(R"(/api/admin/class/(\d+)/problem/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str());
         int pid = stoi(req.matches[2].str());
         lock_guard<mutex> lk(g_biz_mu);
@@ -469,7 +478,7 @@ static void register_routes(httplib::Server& svr) {
 
     // POST /api/admin/class/{id}/contest 创建比赛
     svr.Post(R"(/api/admin/class/(\d+)/contest)", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str());
         auto b = parse_body(req);
         string title = b.value("title", "");
@@ -491,7 +500,7 @@ static void register_routes(httplib::Server& svr) {
 
     // DELETE /api/admin/class/{id}/contest/{cid2}
     svr.Delete(R"(/api/admin/class/(\d+)/contest/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str()); int cid2 = stoi(req.matches[2].str());
         lock_guard<mutex> lk(g_biz_mu);
         auto cc = load_class_content(cid);
@@ -503,7 +512,7 @@ static void register_routes(httplib::Server& svr) {
 
     // POST /api/admin/class/{id}/training 创建训练
     svr.Post(R"(/api/admin/class/(\d+)/training)", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str());
         auto b = parse_body(req);
         string title = b.value("title", "");
@@ -525,7 +534,7 @@ static void register_routes(httplib::Server& svr) {
 
     // DELETE /api/admin/class/{id}/training/{tid}
     svr.Delete(R"(/api/admin/class/(\d+)/training/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str()); int tid = stoi(req.matches[2].str());
         lock_guard<mutex> lk(g_biz_mu);
         auto cc = load_class_content(cid);
@@ -537,7 +546,7 @@ static void register_routes(httplib::Server& svr) {
 
     // POST /api/admin/class/{id}/homework 创建作业
     svr.Post(R"(/api/admin/class/(\d+)/homework)", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res); if (u.empty()) return;
+        auto u = require_class_admin(req, res); if (u.empty()) return;
         int cid = stoi(req.matches[1].str());
         auto b = parse_body(req);
         string title = b.value("title", "");
@@ -610,6 +619,46 @@ static void register_routes(httplib::Server& svr) {
         for (auto& row : r)
             list.push_back({{"item_name", row[0]}, {"price", stoi(row[1])}, {"created_at", row[2]}});
         respond(res, ok_j({{"items", list}}));
+    });
+
+    // ========== 管理端：用户与角色 ==========
+    svr.Get("/api/admin/users", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        auto rows = g_db.rows("SELECT id,username,role,points,solved_count,created_at FROM users ORDER BY id ASC");
+        json list = json::array();
+        for (auto& r : rows) {
+            list.push_back({{"id", stoll(r[0])}, {"username", r[1]}, {"role", r[2]},
+                            {"points", stoi(r[3])}, {"solved", stoi(r[4])},
+                            {"created_at", r[5]}});
+        }
+        respond(res, ok_j({{"users", list}}));
+    });
+
+    svr.Post(R"(/api/admin/user/(\d+)/role)", [](const httplib::Request& req, httplib::Response& res) {
+        auto me = require_admin(req, res); if (me.empty()) return;
+        long long uid = stoll(req.matches[1].str());
+        auto b = parse_body(req);
+        string role = b.value("role", "");
+        if (role != "user" && role != "admin" && role != "class_admin")
+            return fail(res, 400, "角色必须是 user / admin / class_admin");
+        // 保护：不能把最后一个超级管理员降级
+        if (uid == me["id"].get<long long>() && role != "admin") {
+            // 自己降级 → 检查还有别的 admin
+            auto cnt = g_db.rows("SELECT COUNT(*) FROM users WHERE role='admin' AND id<>" + to_string(uid));
+            if (cnt.empty() || stoi(cnt[0][0]) == 0)
+                return fail(res, 400, "不能降级最后一个超级管理员");
+        }
+        // 保护：如果目标现在是唯一 admin 且降级 → 拒
+        if (role != "admin") {
+            auto cur = g_db.rows("SELECT role FROM users WHERE id=" + to_string(uid));
+            if (!cur.empty() && cur[0][0] == "admin") {
+                auto cnt = g_db.rows("SELECT COUNT(*) FROM users WHERE role='admin' AND id<>" + to_string(uid));
+                if (cnt.empty() || stoi(cnt[0][0]) == 0)
+                    return fail(res, 400, "不能降级最后一个超级管理员");
+            }
+        }
+        g_db.query("UPDATE users SET role='" + g_db.escape(role) + "' WHERE id=" + to_string(uid));
+        respond(res, ok_j());
     });
 
     // ========== 管理端：统计 ==========
@@ -794,7 +843,7 @@ static void register_routes(httplib::Server& svr) {
 
     // ========== 管理端：班级 ==========
     svr.Post("/api/admin/class", [](const httplib::Request& req, httplib::Response& res) {
-        auto u = require_admin(req, res);
+        auto u = require_class_admin(req, res);
         if (u.empty()) return;
         auto b = parse_body(req);
         string name = b.value("name", "");
@@ -914,6 +963,9 @@ int main() {
                    Auth::sha256("admin123") + "','admin')");
         printf("[oj] 已创建管理员账号 admin / admin123\n");
     }
+
+    // schema 自动迁移：role 字段加 class_admin
+    g_db.query("ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','class_admin') NOT NULL DEFAULT 'user'");
 
     httplib::Server svr;
     svr.set_mount_point("/", "static");   // 前端静态文件

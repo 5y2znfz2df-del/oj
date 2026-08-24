@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   id           INT AUTO_INCREMENT PRIMARY KEY,
   username     VARCHAR(64)  NOT NULL UNIQUE,
   password     CHAR(64)     NOT NULL COMMENT 'SHA256 哈希',
-  role         ENUM('user','admin') NOT NULL DEFAULT 'user',
+  role         ENUM('user','admin','class_admin') NOT NULL DEFAULT 'user',
   points       INT          NOT NULL DEFAULT 0,
   solved_count INT          NOT NULL DEFAULT 0,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
