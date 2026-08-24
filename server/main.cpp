@@ -11,6 +11,7 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <csignal>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -1350,6 +1351,8 @@ static void register_routes(httplib::Server& svr) {
 
 // ---------------- 入口 ----------------
 int main() {
+    // 忽略 SIGPIPE：客户端断开时写响应会触发 SIGPIPE 直接杀进程，必须忽略
+    signal(SIGPIPE, SIG_IGN);
     mkdirs("data");
     mkdirs(TEMP_DIR);
     mkdirs("logs");
