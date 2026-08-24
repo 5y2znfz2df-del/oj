@@ -634,7 +634,74 @@ static void register_routes(httplib::Server& svr) {
         respond(res, ok_j({{"users", list}}));
     });
 
+    // 超级管理员删除用户
+    svr.Delete(R"(/api/admin/user/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto me = require_admin(req, res); if (me.empty()) return;
+        long long uid = stoll(req.matches[1].str());
+        if (uid == me["id"].get<long long>()) return fail(res, 400, "不能删除自己");
+        // 检查目标用户
+        auto cur = g_db.rows("SELECT role FROM users WHERE id=" + to_string(uid));
+        if (cur.empty()) return fail(res, 404, "用户不存在");
+        // 如果是唯一超级管理员，拒
+        if (cur[0][0] == "admin") {
+            auto cnt = g_db.rows("SELECT COUNT(*) FROM users WHERE role='admin' AND id<>" + to_string(uid));
+            if (cnt.empty() || stoi(cnt[0][0]) == 0)
+                return fail(res, 400, "不能删除最后一个超级管理员");
+        }
+        // 清理 sessions、submissions(保留下 user_id)、purchases、classes members
+        g_db.query("DELETE FROM sessions WHERE user_id=" + to_string(uid));
+        // 查询目标用户名
+        string uname;
+        auto urows = g_db.rows("SELECT username FROM users WHERE id=" + to_string(uid));
+        if (!urows.empty()) uname = urows[0][0];
+        // 解绑班级成员
+        if (!uname.empty()) {
+            lock_guard<mutex> lk(g_biz_mu);
+            auto cf = load_data("classes.json");
+            for (auto& c : cf["classes"]) {
+                auto& mems = c["members"];
+                for (size_t i = 0; i < mems.size(); i++) {
+                    if (mems[i].is_string() && mems[i].get<string>() == uname) {
+                        mems.erase(mems.begin() + (long)i);
+                        break;
+                    }
+                }
+            }
+            save_data("classes.json", cf);
+        }
+        g_db.query("DELETE FROM users WHERE id=" + to_string(uid));
+        respond(res, ok_j());
+    });
+
+    // 注销自己账号（超级管理员禁自杀）
+    svr.Post("/api/account/delete", [](const httplib::Request& req, httplib::Response& res) {
+        auto me = require_user(req, res); if (me.empty()) return;
+        long long uid = me["id"].get<long long>();
+        string role = me.value("role", "");
+        if (role == "admin") return fail(res, 400, "超级管理员不能注销，请先转交权限");
+        g_db.query("DELETE FROM sessions WHERE user_id=" + to_string(uid));
+        // 从所有班级中移除
+        string uname = me.value("username", "");
+        if (!uname.empty()) {
+            lock_guard<mutex> lk(g_biz_mu);
+            auto cf = load_data("classes.json");
+            for (auto& c : cf["classes"]) {
+                auto& mems = c["members"];
+                for (size_t i = 0; i < mems.size(); i++) {
+                    if (mems[i].is_string() && mems[i].get<string>() == uname) {
+                        mems.erase(mems.begin() + (long)i);
+                        break;
+                    }
+                }
+            }
+            save_data("classes.json", cf);
+        }
+        g_db.query("DELETE FROM users WHERE id=" + to_string(uid));
+        respond(res, ok_j());
+    });
+
     svr.Post(R"(/api/admin/user/(\d+)/role)", [](const httplib::Request& req, httplib::Response& res) {
+
         auto me = require_admin(req, res); if (me.empty()) return;
         long long uid = stoll(req.matches[1].str());
         auto b = parse_body(req);
