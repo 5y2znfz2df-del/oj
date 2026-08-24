@@ -406,7 +406,7 @@ static void register_routes(httplib::Server& svr) {
         for (auto& c : cf["classes"]) if (c.value("id", 0) == cid) { cls = &c; break; }
         if (!cls) return fail(res, 404, "班级不存在");
         bool joined = false;
-        bool is_admin = !u.empty() && u.value("role", "") == "admin";
+        bool is_admin = !u.empty() && (u.value("role", "") == "admin" || u.value("role", "") == "class_admin");
         for (auto& m : (*cls)["members"]) if (m.get<string>() == me) { joined = true; break; }
         auto cc = load_class_content(cid);
         auto& cdata = cc[to_string(cid)];

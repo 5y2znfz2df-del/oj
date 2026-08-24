@@ -276,8 +276,13 @@ async function renderClasses(page) {
         </div>
       </div>`;
     }).join('');
-    page.innerHTML = `<h1 class="page-title">班级</h1>${
-      cards || '<div class="empty">暂无班级，让管理员建一个吧</div>'}`;
+    page.innerHTML = `<h1 class="page-title">班级</h1>
+      <div style="margin-bottom:12px">
+        ${(state.user && (state.user.role === 'admin' || state.user.role === 'class_admin'))
+          ? '<button class="btn btn-primary" data-action="admin-add-class-prompt">＋ 创建班级</button>'
+          : ''}
+      </div>
+      ${cards || '<div class="empty">暂无班级，让管理员建一个吧</div>'}`;
   } catch (e) {
     page.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
   }
@@ -494,17 +499,18 @@ async function renderAdmin(page) {
   }
   page.innerHTML = '<div class="empty">加载中…</div>';
   try {
-    const [stats, problems, anns, trainings, classes, shop] = await Promise.all([
+    const [stats, problems, anns, trainings, classes, shop, users] = await Promise.all([
       API.get('/api/admin/stats'),
       API.get('/api/problems'),
       API.get('/api/announcements'),
       API.get('/api/trainings'),
       API.get('/api/classes'),
       API.get('/api/shop'),
+      API.get('/api/admin/users'),
     ]);
     adminData = {
       stats, problems: problems.problems, anns: anns.announcements,
-      trainings: trainings.trainings, classes: classes.classes, shop: shop.items,
+      trainings: trainings.trainings, classes: classes.classes, shop: shop.items, users: users.users,
     };
   } catch (e) {
     page.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
@@ -525,12 +531,14 @@ async function renderAdmin(page) {
       <button class="btn" data-action="admin-tab" data-atab="trainings">训练</button>
       <button class="btn" data-action="admin-tab" data-atab="classes">班级</button>
       <button class="btn" data-action="admin-tab" data-atab="shop">商城</button>
+      <button class="btn" data-action="admin-tab" data-atab="users">用户与角色</button>
     </div>
     <div class="admin-panel" id="apanel-problems">${adminProblemPanel()}</div>
     <div class="admin-panel" id="apanel-anns">${adminAnnPanel()}</div>
     <div class="admin-panel" id="apanel-trainings">${adminTrainingPanel()}</div>
     <div class="admin-panel" id="apanel-classes">${adminClassPanel()}</div>
-    <div class="admin-panel" id="apanel-shop">${adminShopPanel()}</div>`;
+    <div class="admin-panel" id="apanel-shop">${adminShopPanel()}</div>
+    <div class="admin-panel" id="apanel-users">${adminUsersPanel()}</div>`;
   switchAdminTab(currentAdminTab);
 }
 
@@ -648,6 +656,36 @@ function adminClassPanel() {
     </div>`;
 }
 
+function adminUsersPanel() {
+  const roleBadge = r => {
+    if (r === 'admin') return '<span class="tag" style="background:#dc2626;color:#fff">超级管理员</span>';
+    if (r === 'class_admin') return '<span class="tag" style="background:#f59e0b;color:#fff">班级管理员</span>';
+    return '<span class="tag">普通用户</span>';
+  };
+  return `
+    <div class="card">
+      <h3>用户与角色</h3>
+      <p class="muted">说明：<b>超级管理员</b>拥有所有权限；<b>班级管理员</b>仅能创建/管理班级，无法进入此后台。</p>
+      <table><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>积分</th><th>AC数</th><th>注册时间</th><th>操作</th></tr></thead><tbody>
+        ${adminData.users.map(u => `<tr>
+          <td>#${u.id}</td>
+          <td>${escapeHtml(u.username)}</td>
+          <td>${roleBadge(u.role)}</td>
+          <td>${u.points}</td>
+          <td>${u.solved}</td>
+          <td>${escapeHtml(u.created_at)}</td>
+          <td>
+            <select data-action="change-role" data-uid="${u.id}" data-username="${escapeHtml(u.username)}">
+              <option value="user" ${u.role==='user'?'selected':''}>普通用户</option>
+              <option value="class_admin" ${u.role==='class_admin'?'selected':''}>班级管理员</option>
+              <option value="admin" ${u.role==='admin'?'selected':''}>超级管理员</option>
+            </select>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+
 function adminShopPanel() {
   return `
     <div class="card">
@@ -737,6 +775,25 @@ function adminResetProblemForm() {
 }
 
 // ---------- 全局事件委托 ----------
+document.addEventListener('change', async (e) => {
+  if (e.target.dataset.action === 'change-role') {
+    const uid = parseInt(e.target.dataset.uid);
+    const username = e.target.dataset.username;
+    const role = e.target.value;
+    const roleName = role === 'admin' ? '超级管理员' : role === 'class_admin' ? '班级管理员' : '普通用户';
+    if (!confirm(`将 ${username} 设置为 ${roleName}？`)) {
+      // 撤销选择
+      e.target.value = adminData.users.find(u => u.id === uid)?.role || 'user';
+      return;
+    }
+    try {
+      await API.post(`/api/admin/user/${uid}/role`, { role });
+      alert('✅ 角色已更新');
+      await renderAdmin($('page'));
+    } catch (err) { alert(err.message); e.target.value = 'user'; }
+  }
+});
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -796,6 +853,8 @@ document.addEventListener('click', (e) => {
       break;
 
     case 'admin-add-class': adminAddClass(); break;
+    case 'admin-add-class-prompt': adminAddClassPrompt(); break;
+    case 'change-role': /* select.change 事件处理在下方 */ break;
     case 'admin-del-class':
       openConfirmModal('确定删除这个班级吗？', async () => {
         try { await API.del('/api/admin/class/' + el.dataset.id); await renderAdmin($('page')); }
@@ -855,6 +914,17 @@ async function adminAddClass() {
     });
     alert('已创建');
     await renderAdmin($('page'));
+  } catch (e) { alert(e.message); }
+}
+
+async function adminAddClassPrompt() {
+  const name = prompt('班级名：'); if (!name) return;
+  const invite_code = prompt('邀请码（可留空）：') || '';
+  const description = prompt('班级描述（可留空）：') || '';
+  try {
+    const r = await API.post('/api/admin/class', { name, invite_code, description });
+    alert('✅ 已创建班级');
+    renderClasses($('page'));
   } catch (e) { alert(e.message); }
 }
 
