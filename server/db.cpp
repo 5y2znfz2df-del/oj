@@ -15,8 +15,7 @@ bool DB::reconnect() {
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }
     conn_ = mysql_init(nullptr);
     if (!conn_) return false;
-    char reconnect_opt = 1;
-    mysql_options(conn_, MYSQL_OPT_RECONNECT, &reconnect_opt);
+    // 不再设 MYSQL_OPT_RECONNECT（MySQL 8.0 deprecated，且会报错）
     mysql_options(conn_, MYSQL_SET_CHARSET_NAME, "utf8mb4");
     if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(), pass_.c_str(),
                             dbname_.c_str(), port_, nullptr, 0)) {
