@@ -1126,64 +1126,45 @@ static void register_routes(httplib::Server& svr) {
         });
     }
 
-    // ========== AI 助手（token 余额制） ==========
-    const long long AI_PACK_TOKENS = 100000;   // 一包 = 10 万 token
-    const int      AI_PACK_PRICE   = 300;       // 300 积分
-    const string   AI_API_URL = "https://api.deepseek.com/chat/completions";  // 可在 config.json 覆盖
-    const string   AI_MODEL   = "deepseek-chat";
+    // ========== AI 助手（用户自带 API Key） ==========
+    const string AI_API_BASE = "https://api.deepseek.com";
+    const string AI_MODEL   = "deepseek-chat";
 
-    // 查询 AI token 余额
-    svr.Get("/api/ai/balance", [](const httplib::Request& req, httplib::Response& res) {
+    // 查询是否已配置 AI key（不返回 key 本体）
+    svr.Get("/api/ai/status", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
-        auto rows = g_db.rows("SELECT ai_tokens FROM users WHERE id=" + to_string(u["id"].get<long long>()));
-        long long bal = rows.empty() ? 0 : stoll(rows[0][0]);
-        respond(res, ok_j({{"ai_tokens", bal}, {"pack_price", AI_PACK_PRICE},
-                           {"pack_tokens", AI_PACK_TOKENS}}));
+        auto rows = g_db.rows("SELECT ai_api_key FROM users WHERE id=" + to_string(u["id"].get<long long>()));
+        string key = rows.empty() ? "" : rows[0][0];
+        respond(res, ok_j({{"configured", !key.empty()}, {"model", AI_MODEL}}));
     });
 
-    // 用积分购买 token 包
-    svr.Post("/api/ai/buy_pack", [](const httplib::Request& req, httplib::Response& res) {
+    // 保存/清空用户自己的 API Key
+    svr.Patch("/api/ai/key", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
-        long long my_pts = u["points"].get<int>();
-        if (my_pts < AI_PACK_PRICE) return fail(res, 400, "积分不足，需要 " + to_string(AI_PACK_PRICE) + " 积分");
-        g_db.query("UPDATE users SET points=points-" + to_string(AI_PACK_PRICE) +
-                   ", ai_tokens=ai_tokens+" + to_string(AI_PACK_TOKENS) +
-                   " WHERE id=" + to_string(u["id"].get<long long>()));
-        auto rows = g_db.rows("SELECT ai_tokens FROM users WHERE id=" + to_string(u["id"].get<long long>()));
-        long long bal = rows.empty() ? 0 : stoll(rows[0][0]);
-        respond(res, ok_j({{"ai_tokens", bal}, {"granted", AI_PACK_TOKENS}}));
+        auto b = parse_body(req);
+        string key = b.value("api_key", "");
+        if (key.size() > 256) key = key.substr(0, 256);
+        g_db.query("UPDATE users SET ai_api_key='" + g_db.escape(key) +
+                   "' WHERE id=" + to_string(u["id"].get<long long>()));
+        respond(res, ok_j({{"configured", !key.empty()}}));
     });
 
-    // AI 对话（按 token 扣余额）
+    // AI 对话（费用走用户自己的 key）
     svr.Post("/api/ai/chat", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto b = parse_body(req);
         string msg = b.value("message", "");
         if (msg.empty()) return fail(res, 400, "消息不能为空");
         if (msg.size() > 4000) return fail(res, 400, "消息过长（≤4000 字）");
-        long long uid = u["id"].get<long long>();
-        auto rows = g_db.rows("SELECT ai_tokens FROM users WHERE id=" + to_string(uid));
-        long long bal = rows.empty() ? 0 : stoll(rows[0][0]);
-        if (bal <= 0) return fail(res, 400, "AI 余额不足，请先购买 token 包（300 积分/包）");
-        // 简单 token 估算：中文按 1.3 token/字，英文按 1 token/4字符，保守估计
-        auto est_tokens = [](const string& s) {
-            long long n = 0;
-            for (unsigned char c : s) n += (c >= 0x80) ? 2 : 1;  // UTF-8 多字节当中文
-            return n / 2 + 1;
-        };
-        long long est = est_tokens(msg) + est_tokens("你是比特OJ的AI助手...") + 64;
-        if (est > bal) return fail(res, 400, "余额可能不够本次对话（约需 " + to_string(est) + " token，你剩 " + to_string(bal) + "）");
-        // 读取 AI key 配置（config.json 可选 ai.api_key）
-        json cfg = store::load("server/config.json");
-        string api_key = cfg.value("ai", json::object()).value("api_key", "");
-        if (api_key.empty()) return fail(res, 500, "AI 未配置（管理员需在 config.json 设置 ai.api_key）");
+        auto rows = g_db.rows("SELECT ai_api_key FROM users WHERE id=" + to_string(u["id"].get<long long>()));
+        string api_key = rows.empty() ? "" : rows[0][0];
+        if (api_key.empty()) return fail(res, 400, "请先在【个人主页→设置】里填入你自己的 API Key");
         // 组装请求体
         json sys_msg = {{"role", "system"}, {"content", "你是比特 OJ 的 AI 助手，帮助 C++ 学习者解答编程问题。回答简洁清晰，可以给代码示例。"}};
         json usr_msg = {{"role", "user"}, {"content", msg}};
         json msgs = json::array(); msgs.push_back(sys_msg); msgs.push_back(usr_msg);
         json payload = {{"model", AI_MODEL}, {"stream", false}, {"messages", msgs}};
-        // 用 httplib 调 DeepSeek API
-        httplib::Client cli("https://api.deepseek.com");
+        httplib::Client cli(AI_API_BASE);
         cli.set_connection_timeout(10, 0);
         cli.set_read_timeout(60, 0);
         httplib::Headers hdrs = {{"Content-Type", "application/json"},
@@ -1200,12 +1181,7 @@ static void register_routes(httplib::Server& svr) {
         if (choices.empty()) return fail(res, 502, "AI 无返回");
         string reply = choices[0].value("message", json::object()).value("content", "");
         long long used = respj.value("usage", json::object()).value("total_tokens", 0);
-        if (used <= 0) used = est + est_tokens(reply) + 32;
-        // 扣余额
-        g_db.query("UPDATE users SET ai_tokens=ai_tokens-" + to_string(used) + " WHERE id=" + to_string(uid));
-        long long left = bal - used;
-        if (left < 0) left = 0;
-        respond(res, ok_j({{"reply", reply}, {"used", used}, {"left", left}}));
+        respond(res, ok_j({{"reply", reply}, {"used", used}}));
     });
 
     // ========== 管理端：训练 ==========
@@ -1380,12 +1356,12 @@ int main() {
         if (!chk.empty() && chk[0][0] == "0")
             g_db.query("ALTER TABLE users ADD COLUMN signature VARCHAR(200) NOT NULL DEFAULT ''");
     }
-    // schema 自动迁移：users 加 ai_tokens（AI 使用额度，单位：token）
+    // schema 自动迁移：users 加 ai_api_key（用户自己填的 API Key）
     {
         auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
-                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='ai_tokens'");
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='ai_api_key'");
         if (!chk.empty() && chk[0][0] == "0")
-            g_db.query("ALTER TABLE users ADD COLUMN ai_tokens BIGINT NOT NULL DEFAULT 0");
+            g_db.query("ALTER TABLE users ADD COLUMN ai_api_key VARCHAR(256) NOT NULL DEFAULT ''");
     }
     // schema 自动迁移：题目笔记表 user_notes
     g_db.query("CREATE TABLE IF NOT EXISTS user_notes ("
