@@ -1180,25 +1180,31 @@ static void register_routes(httplib::Server& svr) {
         json usr_msg = {{"role", "user"}, {"content", msg}};
         json msgs = json::array(); msgs.push_back(sys_msg); msgs.push_back(usr_msg);
         json payload = {{"model", pv.model}, {"stream", false}, {"messages", msgs}};
-        httplib::Result r;
-        try {
-            httplib::Client cli(pv.base);
-            cli.set_connection_timeout(10, 0);
-            cli.set_read_timeout(120, 0);
-            httplib::Headers hdrs = {{"Content-Type", "application/json"},
-                                    {"Authorization", "Bearer " + api_key}};
-            r = cli.Post(pv.path, hdrs, payload.dump(), "application/json");
-        } catch (const std::exception& e) {
-            return fail(res, 502, string("AI 调用异常: ") + e.what());
-        } catch (...) {
-            return fail(res, 502, "AI 调用异常(未知)");
+        string payload_str = payload.dump();
+        // 用系统 curl 调用（避免 httplib Client 崩溃风险）
+        // 构造 curl 命令：单引号转义
+        auto esc_sh = [](const string& s) {
+            string o;
+            for (char c : s) { if (c == '\'') o += "/' '\\'/"; else o += c; }
+            return o;
+        };
+        string cmd = "curl -s -m 60 -X POST '" + pv.base + pv.path +
+                     "' -H 'Authorization: Bearer " + esc_sh(api_key) +
+                     "' -H 'Content-Type: application/json' -d '" + esc_sh(payload_str) + "'";
+        string out;
+        {
+            FILE* fp = popen(cmd.c_str(), "r");
+            if (!fp) return fail(res, 500, "无法启动 AI 调用");
+            char buf[4096];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) out.append(buf, n);
+            pclose(fp);
         }
-        if (!r) return fail(res, 502, "AI 服务不可达");
+        if (out.empty()) return fail(res, 502, "AI 服务不可达");
         json respj;
-        try { respj = json::parse(r->body); } catch (...) { return fail(res, 502, "AI 返回异常"); }
-        if (r->status != 200) {
-            string em = respj.value("error", json::object()).value("message", "AI 错误");
-            if (em.empty()) em = "AI 返回 " + to_string(r->status);
+        try { respj = json::parse(out); } catch (...) { return fail(res, 502, "AI 返回异常"); }
+        if (respj.contains("error")) {
+            string em = respj["error"].value("message", "AI 错误");
             return fail(res, 502, em);
         }
         auto choices = respj.value("choices", json::array());
