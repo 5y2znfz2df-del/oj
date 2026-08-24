@@ -1148,14 +1148,14 @@ static void register_routes(httplib::Server& svr) {
         respond(res, ok_j(st));
     });
 
-    // 保存/清空用户自己的 API Key + 平台
+    // 保存/清空用户自己的 API Key（自动识别平台：sk-开头=DeepSeek，否则=MiniMax）
     svr.Patch("/api/ai/key", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto b = parse_body(req);
         string key = b.value("api_key", "");
         if (key.size() > 256) key = key.substr(0, 256);
-        string prov = b.value("provider", "deepseek");
-        if (prov != "deepseek" && prov != "minimax") prov = "deepseek";
+        string prov = "minimax";
+        if (key.rfind("sk-", 0) == 0 || key.rfind("SK-", 0) == 0) prov = "deepseek";
         g_db.query("UPDATE users SET ai_api_key='" + g_db.escape(key) +
                    "', ai_provider='" + g_db.escape(prov) +
                    "' WHERE id=" + to_string(u["id"].get<long long>()));
