@@ -1132,7 +1132,7 @@ static void register_routes(httplib::Server& svr) {
     // 注意：必须 static，否则 register_routes 返回后悬垂，handler 调用时段错误
     static const AiProv AI_PROVIDERS[] = {
         {"deepseek", "https://api.deepseek.com", "/chat/completions", "deepseek-chat"},
-        {"minimax",  "https://api.minimaxi.com", "/v1/text/chatcompletion_v2", "abab6.5s-chat"},
+        {"minimax",  "https://api.minimaxi.com", "/v1/chat/completions", "MiniMax-M2.7"},
     };
     static auto ai_prov = [](const string& p, AiProv& out) {
         for (auto& pr : AI_PROVIDERS) if (pr.name == p) { out = pr; return true; }
@@ -1157,7 +1157,9 @@ static void register_routes(httplib::Server& svr) {
         string key = b.value("api_key", "");
         if (key.size() > 256) key = key.substr(0, 256);
         string prov = "minimax";
-        if (key.rfind("sk-", 0) == 0 || key.rfind("SK-", 0) == 0) prov = "deepseek";
+        // 识别：sk-cp- 开头 = MiniMax 新版 OpenAI兼容 key；其他 sk- 开头 = DeepSeek；否则 MiniMax
+        if (key.rfind("sk-cp-", 0) == 0 || key.rfind("SK-CP-", 0) == 0) prov = "minimax";
+        else if (key.rfind("sk-", 0) == 0 || key.rfind("SK-", 0) == 0) prov = "deepseek";
         g_db.query("UPDATE users SET ai_api_key='" + g_db.escape(key) +
                    "', ai_provider='" + g_db.escape(prov) +
                    "' WHERE id=" + to_string(u["id"].get<long long>()));
