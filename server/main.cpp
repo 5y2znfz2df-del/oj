@@ -1008,7 +1008,7 @@ static void register_routes(httplib::Server& svr) {
         svr.Post("/api/files/upload", [&files_dir, &gen_file_id, &load_files](const httplib::Request& req, httplib::Response& res) {
             auto u = require_user(req, res); if (u.empty()) return;
             if (!req.has_file("file")) return fail(res, 400, "未选择文件");
-            auto& f = req.get_file_value("file");
+            const auto& f = req.get_file_value("file");
             if (f.content.size() > 20 * 1024 * 1024) return fail(res, 400, "文件不能超过 20MB");
             mkdirs(files_dir);
             string fid = gen_file_id();
