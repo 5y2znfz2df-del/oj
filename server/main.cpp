@@ -1010,7 +1010,21 @@ static void register_routes(httplib::Server& svr) {
             auto u = require_user(req, res); if (u.empty()) return;
             if (!req.has_file("file")) return fail(res, 400, "未选择文件");
             const auto& f = req.get_file_value("file");
-            if (f.content.size() > 20 * 1024 * 1024) return fail(res, 400, "文件不能超过 20MB");
+            string role = u.value("role", "");
+            long long MAX = (role == "admin") ? (long long)1024 * 1024 * 1024 : 20LL * 1024 * 1024;  // admin 1GB, 普通 20MB
+            if ((long long)f.content.size() > MAX) {
+                string msg = string("文件太大（") + to_string(f.content.size()/1024/1024) + "MB），上限 " + (role == "admin" ? "1GB" : "20MB");
+                return fail(res, 400, msg);
+            }
+            // 总磁盘配额：普通 200MB，admin 2GB
+            long long QUOTA = (role == "admin") ? 2LL * 1024 * 1024 * 1024 : 200LL * 1024 * 1024;
+            long long used = 0;
+            auto cf2 = load_files();
+            for (auto& f2 : cf2.value("files", json::array())) used += f2["size"].get<long long>();
+            if (used + (long long)f.content.size() > QUOTA) {
+                string msg = string("总空间超限（已用 ") + to_string(used/1024/1024) + "MB），上限 " + (role == "admin" ? "2GB" : "200MB");
+                return fail(res, 400, msg);
+            }
             mkdirs(files_dir);
             string fid = gen_file_id();
             string path = files_dir + "/" + fid;
@@ -1035,9 +1049,17 @@ static void register_routes(httplib::Server& svr) {
         });
 
         svr.Get("/api/files", [&load_files](const httplib::Request& req, httplib::Response& res) {
-            (void)req;
+            auto u = current_user(req);
             auto mf = load_files();
-            respond(res, ok_j({{"files", mf["files"]}}));
+            // 统计已用空间
+            long long used = 0;
+            for (auto& f : mf.value("files", json::array())) used += f["size"].get<long long>();
+            string role = u.value("role", "user");
+            long long quota = (role == "admin") ? 2LL * 1024 * 1024 * 1024 : 200LL * 1024 * 1024;
+            long long singleMax = (role == "admin") ? 1024LL * 1024 * 1024 : 20LL * 1024 * 1024;
+            respond(res, ok_j({{"files", mf["files"]},
+                               {"used", used}, {"quota", quota},
+                               {"single_max", singleMax}, {"role", role}}));
         });
 
         svr.Get(R"(/api/files/(\w+)/download)", [&load_files](const httplib::Request& req, httplib::Response& res) {
