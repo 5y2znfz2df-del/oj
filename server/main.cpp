@@ -733,7 +733,7 @@ static void register_routes(httplib::Server& svr) {
         lock_guard<mutex> lk(g_biz_mu);
         auto af = load_data("announcements.json");
         auto& anns = af["announcements"];
-        anns.insert(anns.begin(), {{"id", next_id(anns)},
+        anns.insert(anns.begin(), json{{"id", next_id(anns)},
                                    {"title", title},
                                    {"content", b.value("content", "")},
                                    {"created_at", b.value("created_at", "")}});
@@ -767,7 +767,7 @@ static void register_routes(httplib::Server& svr) {
         lock_guard<mutex> lk(g_biz_mu);
         auto tf = load_data("trainings.json");
         auto& ts = tf["trainings"];
-        ts.insert(ts.begin(), {{"id", next_id(ts)},
+        ts.insert(ts.begin(), json{{"id", next_id(ts)},
                                {"title", title},
                                {"description", b.value("description", "")},
                                {"problem_ids", b.value("problem_ids", json::array())},
@@ -802,7 +802,7 @@ static void register_routes(httplib::Server& svr) {
         lock_guard<mutex> lk(g_biz_mu);
         auto cf = load_data("classes.json");
         auto& cs = cf["classes"];
-        cs.insert(cs.begin(), {{"id", next_id(cs)},
+        cs.insert(cs.begin(), json{{"id", next_id(cs)},
                                {"name", name},
                                {"description", b.value("description", "")},
                                {"invite_code", b.value("invite_code", "")},
@@ -838,7 +838,7 @@ static void register_routes(httplib::Server& svr) {
         lock_guard<mutex> lk(g_biz_mu);
         auto sf = load_data("shop.json");
         auto& items = sf["items"];
-        items.push_back({{"id", next_id(items)},
+        items.push_back(json{{"id", next_id(items)},
                          {"name", name},
                          {"description", b.value("description", "")},
                          {"price", b.value("price", 0)},
