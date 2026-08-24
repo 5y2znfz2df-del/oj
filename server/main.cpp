@@ -1054,7 +1054,7 @@ static void register_routes(httplib::Server& svr) {
             // 统计已用空间
             long long used = 0;
             for (auto& f : mf.value("files", json::array())) used += f["size"].get<long long>();
-            string role = u.value("role", "user");
+            string role = u.is_object() ? u.value("role", "user") : "user";
             long long quota = (role == "admin") ? 2LL * 1024 * 1024 * 1024 : 200LL * 1024 * 1024;
             long long singleMax = (role == "admin") ? 1024LL * 1024 * 1024 : 20LL * 1024 * 1024;
             respond(res, ok_j({{"files", mf["files"]},
