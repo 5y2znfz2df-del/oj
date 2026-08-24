@@ -1013,10 +1013,13 @@ static void register_routes(httplib::Server& svr) {
             mkdirs(files_dir);
             string fid = gen_file_id();
             string path = files_dir + "/" + fid;
+            fprintf(stderr, "[files] path=%s size=%zu\n", path.c_str(), f.content.size());
             std::ofstream out(path, std::ios::binary);
-            if (!out) return fail(res, 500, "写入失败");
+            if (!out) { fprintf(stderr, "[files] open failed: %s\n", path.c_str()); return fail(res, 500, "打开文件失败"); }
             out.write(f.content.data(), f.content.size());
+            out.flush();
             out.close();
+            fprintf(stderr, "[files] written %s ok=%d\n", path.c_str(), (int)out.good());
             // 写元数据
             auto mf = load_files();
             time_t now = time(nullptr); struct tm tm; localtime_r(&now, &tm);
