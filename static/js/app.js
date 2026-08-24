@@ -64,6 +64,7 @@ function router() {
   else if (section === 'trainings') renderTrainings(page);
   else if (section === 'announcements') renderAnnouncements(page);
   else if (section === 'classes') renderClasses(page);
+  else if (section === 'class' && parts[1]) renderClass(parseInt(parts[1]), page);
   else if (section === 'shop') renderShop(page);
   else if (section === 'admin') renderAdmin(page);
   else page.innerHTML = '<div class="empty">404，页面被婆罗门搬走了。回 <a href="#/problems">题库</a></div>';
@@ -269,7 +270,10 @@ async function renderClasses(page) {
         <h2>🏫 ${escapeHtml(c.name)}</h2>
         <p class="desc-text">${escapeHtml(c.description)}</p>
         <p class="muted">邀请码：<b>${escapeHtml(c.invite_code)}</b> · 成员 ${c.member_count} 人${c.joined ? ' · 你已加入 ✅' : ''}</p>
-        ${btn}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${btn}
+          <a class="btn btn-sm" href="#/class/${c.id}">进入班级 →</a>
+        </div>
       </div>`;
     }).join('');
     page.innerHTML = `<h1 class="page-title">班级</h1>${
@@ -295,6 +299,138 @@ async function leaveClass(id) {
     alert('已退出班级');
     renderClasses($('page'));
   } catch (e) { alert(e.message); }
+}
+
+// ========== 班级详情页 ==========
+async function renderClass(cid, page) {
+  page.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await API.get('/api/class/' + cid);
+    const cls = d.class;
+    const isAdmin = cls.is_admin;
+    const adminBtn = (action, text, extra = '') =>
+      `<button class="btn btn-primary btn-sm" data-action="${action}" data-cid="${cid}" ${extra}>${text}</button>`;
+
+    const probRows = d.problems.map(p => `
+      <tr>
+        <td><a class="link" href="#/problem/${p.id}">#${p.id} ${escapeHtml(p.title)}</a></td>
+        <td><span class="diff-badge diff-${Math.min(p.difficulty, 4)}">L${p.difficulty}</span></td>
+        ${isAdmin ? `<td><button class="btn btn-danger btn-sm" data-action="class-del-problem" data-cid="${cid}" data-pid="${p.id}">移除</button></td>` : ''}
+      </tr>`).join('');
+
+    const renderList = (arr, type) => arr.map(x => `
+      <div class="card" style="margin-top:8px">
+        <h3 style="margin:0">${escapeHtml(x.title)}</h3>
+        ${x.description ? `<p class="desc-text" style="margin:4px 0">${escapeHtml(x.description)}</p>` : ''}
+        ${x.deadline ? `<p class="muted">截止：${escapeHtml(x.deadline)}</p>` : ''}
+        ${x.start || x.end ? `<p class="muted">${escapeHtml(x.start || '?')} ~ ${escapeHtml(x.end || '?')}</p>` : ''}
+        <p class="muted">题目数：${(x.problems || []).length}</p>
+        ${isAdmin ? `<button class="btn btn-danger btn-sm" data-action="class-del-${type}" data-cid="${cid}" data-tid="${x.id}">删除</button>` : ''}
+      </div>`).join('');
+
+    const memberList = cls.members.map(m => `<span class="tag">${escapeHtml(m)}</span>`).join(' ') || '<span class="muted">暂无成员</span>';
+
+    page.innerHTML = `
+      <h1 class="page-title">🏫 ${escapeHtml(cls.name)}</h1>
+      <div class="card">
+        <p class="desc-text">${escapeHtml(cls.description || '(暂无描述)')}</p>
+        <p class="muted">邀请码：<b style="color:#f59e0b">${escapeHtml(cls.invite_code)}</b> · 成员 ${cls.members.length} 人${cls.joined ? ' · 你已加入 ✅' : ''}${isAdmin ? ' · 你是管理员 👑' : ''}</p>
+        <a class="btn btn-sm" href="#/classes">← 返回班级列表</a>
+      </div>
+
+      <div class="card">
+        <h2>👥 成员 (${cls.members.length})</h2>
+        <div style="line-height:2">${memberList}</div>
+      </div>
+
+      <div class="card">
+        <h2>📚 班级题库 (${d.problems.length}) ${isAdmin ? adminBtn('class-add-problem', '+ 添加题目', 'data-prompt="输入题目ID"') : ''}</h2>
+        ${d.problems.length ? `<table class="data-table">
+          <thead><tr><th>题目</th><th>难度</th>${isAdmin ? '<th>操作</th>' : ''}</tr></thead>
+          <tbody>${probRows}</tbody>
+        </table>` : '<div class="empty">题库还是空的，管理员可以加题进来</div>'}
+      </div>
+
+      <div class="card">
+        <h2>🏆 比赛 (${d.contests.length}) ${isAdmin ? adminBtn('class-add-contest', '+ 创建比赛') : ''}</h2>
+        ${d.contests.length ? renderList(d.contests, 'contest') : '<div class="empty">暂无比赛</div>'}
+      </div>
+
+      <div class="card">
+        <h2>🎯 训练 (${d.trainings.length}) ${isAdmin ? adminBtn('class-add-training', '+ 创建训练') : ''}</h2>
+        ${d.trainings.length ? renderList(d.trainings, 'training') : '<div class="empty">暂无训练</div>'}
+      </div>
+
+      <div class="card">
+        <h2>📝 作业 (${d.homeworks.length}) ${isAdmin ? adminBtn('class-add-homework', '+ 创建作业') : ''}</h2>
+        ${d.homeworks.length ? renderList(d.homeworks, 'homework') : '<div class="empty">暂无作业</div>'}
+      </div>
+    `;
+  } catch (e) {
+    page.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function classAddProblem(cid) {
+  const pid = prompt('输入要添加到班级题库的题目ID：');
+  if (!pid) return;
+  try {
+    await API.post(`/api/admin/class/${cid}/problem`, { problem_id: parseInt(pid) });
+    renderClass(cid, $('page'));
+  } catch (e) { alert(e.message); }
+}
+async function classDelProblem(cid, pid) {
+  openConfirmModal('从班级题库移除这道题？', async () => {
+    try { await API.del(`/api/admin/class/${cid}/problem/${pid}`); renderClass(cid, $('page')); }
+    catch (e) { alert(e.message); }
+  });
+}
+async function classAddContest(cid) {
+  const title = prompt('比赛名称：'); if (!title) return;
+  const problemsStr = prompt('题目ID列表（逗号分隔，如 4,5,6）：'); if (!problemsStr) return;
+  const problems = problemsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  try {
+    await API.post(`/api/admin/class/${cid}/contest`, { title, problems });
+    renderClass(cid, $('page'));
+  } catch (e) { alert(e.message); }
+}
+async function classDelContest(cid, tid) {
+  openConfirmModal('删除这个比赛？', async () => {
+    try { await API.del(`/api/admin/class/${cid}/contest/${tid}`); renderClass(cid, $('page')); }
+    catch (e) { alert(e.message); }
+  });
+}
+async function classAddTraining(cid) {
+  const title = prompt('训练名称：'); if (!title) return;
+  const description = prompt('训练描述（可留空）：') || '';
+  const problemsStr = prompt('题目ID列表（逗号分隔）：'); if (!problemsStr) return;
+  const problems = problemsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  try {
+    await API.post(`/api/admin/class/${cid}/training`, { title, description, problems });
+    renderClass(cid, $('page'));
+  } catch (e) { alert(e.message); }
+}
+async function classDelTraining(cid, tid) {
+  openConfirmModal('删除这个训练？', async () => {
+    try { await API.del(`/api/admin/class/${cid}/training/${tid}`); renderClass(cid, $('page')); }
+    catch (e) { alert(e.message); }
+  });
+}
+async function classAddHomework(cid) {
+  const title = prompt('作业名称：'); if (!title) return;
+  const deadline = prompt('截止日期（可留空）：') || '';
+  const problemsStr = prompt('题目ID列表（逗号分隔）：'); if (!problemsStr) return;
+  const problems = problemsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  try {
+    await API.post(`/api/admin/class/${cid}/homework`, { title, deadline, problems });
+    renderClass(cid, $('page'));
+  } catch (e) { alert(e.message); }
+}
+async function classDelHomework(cid, tid) {
+  openConfirmModal('删除这个作业？', async () => {
+    try { await API.del(`/api/admin/class/${cid}/homework/${tid}`); renderClass(cid, $('page')); }
+    catch (e) { alert(e.message); }
+  });
 }
 
 // ---------- 商城 ----------
@@ -621,6 +757,14 @@ document.addEventListener('click', (e) => {
     case 'buy-item': buyItem(parseInt(el.dataset.id)); break;
     case 'join-class': joinClass(parseInt(el.dataset.id), el.dataset.code); break;
     case 'leave-class': leaveClass(parseInt(el.dataset.id)); break;
+    case 'class-add-problem': classAddProblem(parseInt(el.dataset.cid)); break;
+    case 'class-del-problem': classDelProblem(parseInt(el.dataset.cid), parseInt(el.dataset.pid)); break;
+    case 'class-add-contest': classAddContest(parseInt(el.dataset.cid)); break;
+    case 'class-del-contest': classDelContest(parseInt(el.dataset.cid), parseInt(el.dataset.tid)); break;
+    case 'class-add-training': classAddTraining(parseInt(el.dataset.cid)); break;
+    case 'class-del-training': classDelTraining(parseInt(el.dataset.cid), parseInt(el.dataset.tid)); break;
+    case 'class-add-homework': classAddHomework(parseInt(el.dataset.cid)); break;
+    case 'class-del-homework': classDelHomework(parseInt(el.dataset.cid), parseInt(el.dataset.tid)); break;
 
     case 'admin-tab': switchAdminTab(el.dataset.atab); break;
     case 'admin-save-problem': adminSaveProblem(); break;
