@@ -993,13 +993,13 @@ static void register_routes(httplib::Server& svr) {
     // 文件存 DATA_DIR/files/{id}.bin，元数据存 DATA_DIR/files.json
     {
         static std::random_device file_rd;
+        // 注意：files_dir 必须是 static，避免闭包块结束析构后悬垂引用
+        static const std::string files_dir = std::string(DATA_DIR) + "/files";
         auto gen_file_id = [&]() {
             std::stringstream ss;
             for (int i = 0; i < 16; i++) ss << std::hex << (file_rd() % 256);
             return ss.str();
         };
-        std::string files_dir = std::string(DATA_DIR) + "/files";
-        fprintf(stderr, "[init] DATA_DIR.c_str=%p DATA_DIR='%s' files_dir='%s'\n", (void*)DATA_DIR.c_str(), std::string(DATA_DIR).c_str(), files_dir.c_str());
         auto load_files = [&]() {
             auto f = load_data("files.json");
             if (!f.contains("files")) f["files"] = json::array();
@@ -1012,16 +1012,13 @@ static void register_routes(httplib::Server& svr) {
             const auto& f = req.get_file_value("file");
             if (f.content.size() > 20 * 1024 * 1024) return fail(res, 400, "文件不能超过 20MB");
             mkdirs(files_dir);
-            fprintf(stderr, "[files] DATA_DIR='%s' files_dir='%s'\n", DATA_DIR.c_str(), files_dir.c_str());
             string fid = gen_file_id();
             string path = files_dir + "/" + fid;
-            fprintf(stderr, "[files] path=%s size=%zu\n", path.c_str(), f.content.size());
             std::ofstream out(path, std::ios::binary);
-            if (!out) { fprintf(stderr, "[files] open failed: %s\n", path.c_str()); return fail(res, 500, "打开文件失败"); }
+            if (!out) return fail(res, 500, "写入失败");
             out.write(f.content.data(), f.content.size());
             out.flush();
             out.close();
-            fprintf(stderr, "[files] written %s ok=%d\n", path.c_str(), (int)out.good());
             // 写元数据
             auto mf = load_files();
             time_t now = time(nullptr); struct tm tm; localtime_r(&now, &tm);
