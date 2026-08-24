@@ -368,6 +368,203 @@ static void register_routes(httplib::Server& svr) {
         fail(res, 404, "班级不存在");
     });
 
+    // ========== 班级详情与扩展（题库/比赛/训练/作业） ==========
+    auto load_class_content = [](int cid) -> json {
+        auto cc = load_data("class_contents.json");
+        string key = to_string(cid);
+        if (!cc.contains(key) || !cc[key].is_object()) cc[key] = json::object();
+        auto& c = cc[key];
+        if (!c.contains("problems"))  c["problems"]  = json::array();
+        if (!c.contains("contests"))  c["contests"]  = json::array();
+        if (!c.contains("trainings")) c["trainings"] = json::array();
+        if (!c.contains("homeworks")) c["homeworks"] = json::array();
+        return cc;
+    };
+    auto save_class_content = [](int cid, const json& full) {
+        save_data("class_contents.json", full);
+    };
+
+    // GET /api/class/{id} 班级详情
+    svr.Get(R"(/api/class/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        int cid = stoi(req.matches[1].str());
+        auto u = current_user(req);
+        string me = u.empty() ? "" : u["username"].get<string>();
+        auto cf = load_data("classes.json");
+        json* cls = nullptr;
+        for (auto& c : cf["classes"]) if (c.value("id", 0) == cid) { cls = &c; break; }
+        if (!cls) return fail(res, 404, "班级不存在");
+        bool joined = false;
+        bool is_admin = !u.empty() && u.value("role", "") == "admin";
+        for (auto& m : (*cls)["members"]) if (m.get<string>() == me) { joined = true; break; }
+        auto cc = load_class_content(cid);
+        auto& cdata = cc[to_string(cid)];
+        auto pf = load_data("problems.json");
+        json probs = json::array();
+        for (auto pidv : cdata["problems"]) {
+            int pid = pidv.get<int>();
+            for (auto& pp : pf["problems"]) {
+                if (pp["id"].get<int>() == pid) {
+                    probs.push_back({{"id", pid}, {"title", pp.value("title", "")},
+                                     {"difficulty", pp.value("difficulty", 1)}});
+                    break;
+                }
+            }
+        }
+        json out_cls = {
+            {"id", cid},
+            {"name", (*cls).value("name", "")},
+            {"description", (*cls).value("description", "")},
+            {"invite_code", (*cls).value("invite_code", "")},
+            {"members", (*cls)["members"]},
+            {"joined", joined},
+            {"is_admin", is_admin}
+        };
+        respond(res, ok_j({{"class", out_cls},
+                           {"problems", probs},
+                           {"contests", cdata["contests"]},
+                           {"trainings", cdata["trainings"]},
+                           {"homeworks", cdata["homeworks"]}}));
+    });
+
+    // POST /api/admin/class/{id}/problem 添加题目到班级题库
+    svr.Post(R"(/api/admin/class/(\d+)/problem)", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        int pid = b.value("problem_id", 0);
+        if (pid <= 0) return fail(res, 400, "problem_id 必填");
+        auto pf = load_data("problems.json");
+        bool exists = false;
+        for (auto& pp : pf["problems"]) if (pp["id"].get<int>() == pid) { exists = true; break; }
+        if (!exists) return fail(res, 404, "题目不存在");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& cdata = cc[to_string(cid)];
+        for (auto pidv : cdata["problems"]) if (pidv.get<int>() == pid) return fail(res, 400, "题目已在班级题库");
+        cdata["problems"].push_back(pid);
+        save_class_content(cid, cc);
+        respond(res, ok_j());
+    });
+
+    // DELETE /api/admin/class/{id}/problem/{pid}
+    svr.Delete(R"(/api/admin/class/(\d+)/problem/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        int pid = stoi(req.matches[2].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& probs = cc[to_string(cid)]["problems"];
+        for (size_t i = 0; i < probs.size(); i++) {
+            if (probs[i].get<int>() == pid) {
+                probs.erase(probs.begin() + (long)i);
+                save_class_content(cid, cc);
+                return respond(res, ok_j());
+            }
+        }
+        fail(res, 404, "题目不在班级题库");
+    });
+
+    // POST /api/admin/class/{id}/contest 创建比赛
+    svr.Post(R"(/api/admin/class/(\d+)/contest)", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "标题必填");
+        auto probs = b.value("problems", json::array());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& cdata = cc[to_string(cid)];
+        int nid = 1;
+        if (!cdata["contests"].empty()) nid = cdata["contests"].back().value("id", 0) + 1;
+        cdata["contests"].push_back({{"id", nid}, {"title", title},
+                                      {"problems", probs},
+                                      {"start", b.value("start", "")},
+                                      {"end", b.value("end", "")},
+                                      {"created_at", b.value("created_at", "")}});
+        save_class_content(cid, cc);
+        respond(res, ok_j({{"id", nid}}));
+    });
+
+    // DELETE /api/admin/class/{id}/contest/{cid2}
+    svr.Delete(R"(/api/admin/class/(\d+)/contest/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str()); int cid2 = stoi(req.matches[2].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& arr = cc[to_string(cid)]["contests"];
+        for (size_t i = 0; i < arr.size(); i++)
+            if (arr[i].value("id", 0) == cid2) { arr.erase(arr.begin() + (long)i); save_class_content(cid, cc); return respond(res, ok_j()); }
+        fail(res, 404, "比赛不存在");
+    });
+
+    // POST /api/admin/class/{id}/training 创建训练
+    svr.Post(R"(/api/admin/class/(\d+)/training)", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "标题必填");
+        auto probs = b.value("problems", json::array());
+        string desc = b.value("description", "");
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& cdata = cc[to_string(cid)];
+        int nid = 1;
+        if (!cdata["trainings"].empty()) nid = cdata["trainings"].back().value("id", 0) + 1;
+        cdata["trainings"].push_back({{"id", nid}, {"title", title},
+                                       {"description", desc},
+                                       {"problems", probs},
+                                       {"created_at", b.value("created_at", "")}});
+        save_class_content(cid, cc);
+        respond(res, ok_j({{"id", nid}}));
+    });
+
+    // DELETE /api/admin/class/{id}/training/{tid}
+    svr.Delete(R"(/api/admin/class/(\d+)/training/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str()); int tid = stoi(req.matches[2].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& arr = cc[to_string(cid)]["trainings"];
+        for (size_t i = 0; i < arr.size(); i++)
+            if (arr[i].value("id", 0) == tid) { arr.erase(arr.begin() + (long)i); save_class_content(cid, cc); return respond(res, ok_j()); }
+        fail(res, 404, "训练不存在");
+    });
+
+    // POST /api/admin/class/{id}/homework 创建作业
+    svr.Post(R"(/api/admin/class/(\d+)/homework)", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str());
+        auto b = parse_body(req);
+        string title = b.value("title", "");
+        if (title.empty()) return fail(res, 400, "标题必填");
+        auto probs = b.value("problems", json::array());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& cdata = cc[to_string(cid)];
+        int nid = 1;
+        if (!cdata["homeworks"].empty()) nid = cdata["homeworks"].back().value("id", 0) + 1;
+        cdata["homeworks"].push_back({{"id", nid}, {"title", title},
+                                       {"problems", probs},
+                                      {"deadline", b.value("deadline", "")},
+                                      {"created_at", b.value("created_at", "")}});
+        save_class_content(cid, cc);
+        respond(res, ok_j({{"id", nid}}));
+    });
+
+    // DELETE /api/admin/class/{id}/homework/{hid}
+    svr.Delete(R"(/api/admin/class/(\d+)/homework/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_admin(req, res); if (u.empty()) return;
+        int cid = stoi(req.matches[1].str()); int hid = stoi(req.matches[2].str());
+        lock_guard<mutex> lk(g_biz_mu);
+        auto cc = load_class_content(cid);
+        auto& arr = cc[to_string(cid)]["homeworks"];
+        for (size_t i = 0; i < arr.size(); i++)
+            if (arr[i].value("id", 0) == hid) { arr.erase(arr.begin() + (long)i); save_class_content(cid, cc); return respond(res, ok_j()); }
+        fail(res, 404, "作业不存在");
+    });
+
     // ========== 商城 ==========
     svr.Get("/api/shop", [](const httplib::Request& req, httplib::Response& res) {
         auto sf = load_data("shop.json");
