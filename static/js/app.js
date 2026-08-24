@@ -150,13 +150,9 @@ async function renderMyProfile(page) {
       </div>
       <div class="card">
         <h3>🤖 AI 助手设置</h3>
-        <p class="muted">填你自己的 AI API Key（DeepSeek / MiniMax），即可在『AI 助手』使用，费用由你的 Key 计费。</p>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="ai-provider">
-            <option value="deepseek">DeepSeek</option>
-            <option value="minimax">MiniMax</option>
-          </select>
-          <input id="ai-key-input" type="password" value="" placeholder="sk-... 你的 API Key" style="flex:1;min-width:200px">
+        <p class="muted">填入你自己的 AI API Key（支持 DeepSeek 等 OpenAI 兼容服务），就可以在『AI 助手』里使用，费用由你的 Key 计费，不走积分。</p>
+        <div style="display:flex;gap:8px">
+          <input id="ai-key-input" type="password" value="" placeholder="sk-... 你的 API Key" style="flex:1">
           <button class="btn btn-primary" data-action="save-ai-key">保存 Key</button>
           <button class="btn" data-action="clear-ai-key">清除</button>
         </div>
@@ -167,9 +163,7 @@ async function renderMyProfile(page) {
     try {
       const st = await API.get('/api/ai/status');
       const el = document.getElementById('ai-key-status');
-      const provSel = document.getElementById('ai-provider');
-      if (provSel) provSel.value = st.provider || 'deepseek';
-      if (el) el.textContent = st.configured ? '✅ 已配置 API Key（' + (st.provider||'deepseek') + ' · ' + st.model + '）' : '⚠️ 尚未配置 API Key';
+      if (el) el.textContent = st.configured ? '✅ 已配置 API Key（' + st.model + '）' : '⚠️ 尚未配置 API Key';
     } catch (e) { /* 忽略 */ }
   } catch (e) {
     page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
@@ -243,10 +237,9 @@ async function saveAiKey() {
   if (!input) return;
   const key = input.value.trim();
   if (!key) { alert('请输入 API Key'); return; }
-  const prov = ($('ai-provider') || {}).value || 'deepseek';
   try {
-    await API.patch('/api/ai/key', { api_key: key, provider: prov });
-    alert('✅ API Key 已保存（' + prov + '）');
+    await API.patch('/api/ai/key', { api_key: key });
+    alert('✅ API Key 已保存');
     input.value = '';
     renderMyProfile($('page'));
   } catch (e) { alert(e.message); }
