@@ -377,31 +377,36 @@ async function renderProblem(id, page) {
   page.innerHTML = `
     <div class="problem-page">
       <div class="problem-left">
-        <div class="card">
-          <h2>#${p.id} ${escapeHtml(p.title)}</h2>
-          <div class="problem-meta">
-            <span>时间限制 <b>${p.time_limit}s</b></span>
-            <span>内存限制 <b>${p.memory_limit}MB</b></span>
-            <span>难度 <b>${p.difficulty}</b></span>
-          </div>
-          <h3>题目描述</h3><div class="desc-text">${escapeHtml(p.description)}</div>
-          <h3>输入格式</h3><div class="desc-text">${escapeHtml(p.input_desc)}</div>
-          <h3>输出格式</h3><div class="desc-text">${escapeHtml(p.output_desc)}</div>
-          <h3>样例</h3>
+        <div class="crumb muted" style="font-size:12px;margin:0 0 6px"><a class="link" href="#/problems">题库</a> › #${p.id} ${escapeHtml(p.title)}</div>
+        <h2 style="margin-top:2px">#${p.id} ${escapeHtml(p.title)}</h2>
+        <div class="problem-meta">
+          <span>时间限制 <b>${p.time_limit}s</b></span>
+          <span>内存限制 <b>${p.memory_limit}MB</b></span>
+          <span>难度 <b>${p.difficulty}</b></span>
+        </div>
+        <h3>题目描述</h3><div class="desc-text">${escapeHtml(p.description)}</div>
+        <h3>输入格式</h3><div class="desc-text">${escapeHtml(p.input_desc)}</div>
+        <h3>输出格式</h3><div class="desc-text">${escapeHtml(p.output_desc)}</div>
+        <h3>输入输出样例</h3>
+        <div class="sample-row">
           ${(p.samples || []).map((s, i) => `
-            <div><b>样例 ${i + 1} 输入</b></div>
-            <div class="sample-box">${escapeHtml(s.input)}</div>
-            <div><b>样例 ${i + 1} 输出</b></div>
-            <div class="sample-box">${escapeHtml(s.output)}</div>`).join('')}
+            <div class="sample-card">
+              <div class="sample-label">输入 #${i + 1}</div>
+              <div class="sample-box">${escapeHtml(s.input)}</div>
+            </div>
+            <div class="sample-card">
+              <div class="sample-label">输出 #${i + 1}</div>
+              <div class="sample-box">${escapeHtml(s.output)}</div>
+            </div>`).join('')}
+        </div>
         </div>
       </div>
       <div class="problem-right">
         <div class="lang-bar">
-          <span>🌐 C++17</span>
-          <span class="muted" style="font-size:12px">G++ · O2 优化 · Consolas</span>
+          <span>🌐 C++17 <span class="muted" style="font-size:12px">· G++ / O2</span></span>
+          <button class="btn btn-primary btn-sm" data-action="submit-code" data-id="${p.id}">🚀 提交评测</button>
         </div>
         <div id="code-editor" class="editor-wrap"></div>
-        <button class="btn btn-primary" style="width:100%;margin-top:12px" data-action="submit-code" data-id="${p.id}">🚀 提交评测</button>
         <div id="result-panel" class="console-panel">
           <div class="console-title">📟 控制台 / 编译信息</div>
           <div class="console-body"><div class="empty">运行结果与编译信息将显示在这里</div></div>
