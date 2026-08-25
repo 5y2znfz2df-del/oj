@@ -416,7 +416,13 @@ body.dark .btn:not(.btn-primary):not(.btn-danger):not(.btn-link):hover {
 /* ═══════════ iOS26 液态玻璃主题 ═══════════ */
 html { min-height: 100%; }
 body {
-  background: url('/bg.jpg') center/cover fixed no-repeat #000;
+  background-color: #000;   /* 加载中先黑底，避免白屏 */
+  background-image: url('/bg.jpg');
+  background-image: image-set(url('/bg.webp') type('image/webp') 1x, url('/bg.jpg') type('image/jpeg') 1x);  /* 支持 WebP 的浏览器优先用 69KB 的 webp */
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 
 /* 液态玻璃核心：半透明 + 模糊 + 高光边缘 */

@@ -1421,6 +1421,17 @@ int main() {
 
     httplib::Server svr;
     svr.set_mount_point("/", "static");   // 前端静态文件
+    // 静态资源分级缓存：图片长缓存，css/js 短缓存，html 不缓存（优化背景图加载速度）
+    svr.set_file_request_handler([](const httplib::Request& req, httplib::Response& res) {
+        const string& p = req.path;
+        auto ends = [&p](const char* s) { return p.size() >= strlen(s) && p.compare(p.size() - strlen(s), strlen(s), s) == 0; };
+        if (ends(".jpg") || ends(".jpeg") || ends(".png") || ends(".webp") || ends(".ico"))
+            res.set_header("Cache-Control", "public, max-age=604800");         // 图片：7 天
+        else if (ends(".css") || ends(".js"))
+            res.set_header("Cache-Control", "public, max-age=3600");           // 样式/脚本：1 小时
+        else
+            res.set_header("Cache-Control", "no-cache");                       // 页面本体：每次都校验
+    });
     register_routes(svr);
 
     printf("[oj] 比特 OJ 启动: http://%s:%d  (题库=%s, 临时=%s)\n",
