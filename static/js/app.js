@@ -55,6 +55,10 @@ function router() {
   const page = $('page');
   disposeEditor();
 
+  // 做题页隐藏左侧登录栏（fixed 悬浮会遮挡题目区）
+  const sideAuth = document.getElementById('side-auth');
+  if (sideAuth) sideAuth.classList.toggle('hide-on-problem', section === 'problem');
+
   document.querySelectorAll('.nav-links a').forEach(a =>
     a.classList.toggle('active', a.dataset.nav === section));
 

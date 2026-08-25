@@ -183,6 +183,9 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
   font-family: Consolas, "Courier New", monospace !important;
 }
 
+/* 左侧登录栏：做题页隐藏（悬浮会遮住题目区） */
+#side-auth.hide-on-problem { display: none !important; }
+
 /* ---------- 题目页左右分栏（左题目 / 右编辑器+控制台） ---------- */
 .problem-page {
   display: grid;
@@ -190,7 +193,7 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
   gap: 20px;
   align-items: start;
 }
-@media (max-width: 680px) {   /* 只有很窄（手机/半屏）才切上下，桌面保持左右 */
+@media (max-width: 560px) {   /* 只有手机宽度才切上下，桌面/平板永远左右 */
   .problem-page { grid-template-columns: 1fr; }
 }
 /* 左侧区块标题：绿色竖条（贴合参考布局） */
