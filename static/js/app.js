@@ -69,7 +69,7 @@ function router() {
   else if (section === 'shop') renderShop(page);
   else if (section === 'admin') renderAdmin(page);
   else if (section === 'files') renderFiles(page);
-  else if (section === 'me') renderMyProfile(page);
+  else if (section === 'me' || section === 'profile') renderMyProfile(page, section === 'profile');
   else if (section === 'ai') renderAiChat(page);
   else page.innerHTML = '<div class="empty">404，页面被婆罗门搬走了。回 <a href="#/problems">题库</a></div>';
   window.scrollTo(0, 0);
@@ -109,7 +109,7 @@ async function renderProblems(page) {
 }
 
 // ---------- 个人主页 ----------
-async function renderMyProfile(page) {
+async function renderMyProfile(page, jumpRank) {
   if (!requireLogin(() => renderMyProfile(page))) return;
   page.innerHTML = '<div class="empty">加载中…</div>';
   try {
@@ -133,7 +133,7 @@ async function renderMyProfile(page) {
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="tier-card">
         <h3>🏆 段位进度</h3>
         <div style="margin:12px 0;height:24px;background:#e5e7eb;border-radius:12px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:${t.color};transition:width 0.3s"></div>
@@ -167,6 +167,11 @@ async function renderMyProfile(page) {
         <p class="muted" id="ai-key-status" style="margin-top:6px;font-size:12px"></p>
       </div>
     `;
+    // 「段位进度」直达：跳转到段位卡片
+    if (jumpRank) {
+      const tc = document.getElementById('tier-card');
+      if (tc) tc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
     // 加载 AI key 状态
     try {
       const st = await API.get('/api/ai/status');
@@ -1327,15 +1332,6 @@ async function adminAddItem() {
 }
 
 // ---------- 启动 ----------
-// ---------- 黑夜模式 ----------
-function initTheme() {
-  const saved = localStorage.getItem('oj_theme');
-  const dark = saved === 'dark';
-  document.body.classList.toggle('dark', dark);
-  const btn = document.getElementById('theme-toggle');
-  if (btn) btn.textContent = dark ? '☀️' : '🌙';
-}
-
 // ---------- 液态玻璃 + 低性能模式 ----------
 function initLiquid() {
   document.body.classList.add('liquid-bg');
@@ -1446,12 +1442,6 @@ window.openSideAuth = openSideAuth;
 window.openAuthModal = openSideAuth;
 
 document.addEventListener('click', (e) => {
-  if (e.target.closest && e.target.closest('#theme-toggle')) {
-    const dark = document.body.classList.toggle('dark');
-    localStorage.setItem('oj_theme', dark ? 'dark' : 'light');
-    const btn = document.getElementById('theme-toggle');
-    if (btn) btn.textContent = dark ? '☀️' : '🌙';
-  }
   if (e.target.closest && e.target.closest('#perf-toggle')) {
     const low = document.body.classList.toggle('low-perf');
     localStorage.setItem('oj_perf', low ? 'low' : 'full');
@@ -1461,7 +1451,7 @@ document.addEventListener('click', (e) => {
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
-  initTheme();
+  document.body.classList.add('dark'); // 默认深色主题（已砍掉切换按钮）
   initLiquid();
   openSideAuth();
   $('confirm-ok').addEventListener('click', () => {
