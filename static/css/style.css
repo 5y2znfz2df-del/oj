@@ -190,7 +190,7 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
   gap: 20px;
   align-items: start;
 }
-@media (max-width: 920px) {
+@media (max-width: 680px) {   /* 只有很窄（手机/半屏）才切上下，桌面保持左右 */
   .problem-page { grid-template-columns: 1fr; }
 }
 /* 左侧区块标题：绿色竖条（贴合参考布局） */
