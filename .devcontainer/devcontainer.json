@@ -9,5 +9,5 @@
       "onAutoForward": "openBrowser"
     }
   },
-  "postStartCommand": "sudo service mysql start 2>/dev/null || true; cd /workspaces/oj && ./run.sh start 2>/dev/null || true"
+  "postStartCommand": "sudo service mysql start 2>/dev/null || true; cd /workspaces/oj && ./run.sh start 2>/dev/null || true; cd /workspaces/oj && nohup bash heartbeat.sh > /dev/null 2>&1 &"
 }
