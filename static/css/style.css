@@ -183,6 +183,71 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
   font-family: Consolas, "Courier New", monospace !important;
 }
 
+/* ---------- 题目页左右分栏（左题目 / 右编辑器+控制台） ---------- */
+.problem-page {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 920px) {
+  .problem-page { grid-template-columns: 1fr; }
+}
+/* 右栏语言条（贴合截图风格） */
+.problem-right .lang-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+/* 语言条 + 编辑器合成一个圆角容器 */
+.problem-right .editor-wrap {
+  margin: 0;
+  border-radius: 0 0 14px 14px;
+  height: 460px;
+}
+/* 控制台面板（终端风） */
+.console-panel {
+  margin-top: 12px;
+  background: #0a0f1a;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+body.dark .console-panel { background: #0d1626; }
+.console-title {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  font-family: Consolas, monospace;
+}
+.console-body {
+  padding: 12px 14px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  min-height: 84px;
+  color: var(--text);
+}
+.console-body .empty { margin: 0; }
+.console-out {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  color: #a7f3d0;
+  font-family: Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.console-ac { margin-top: 10px; color: #4ade80; }
+
 /* ---------- 模态框 ---------- */
 .modal {
   position: fixed; inset: 0;
