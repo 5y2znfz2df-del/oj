@@ -92,6 +92,14 @@ async function renderProblems(page) {
 
   page.innerHTML = `
     <h1 class="page-title">题库</h1>
+    ${state.user ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <span style="font-size:18px">👑 我的积分</span>
+      <b style="font-size:24px;color:#22c55e">⭐ ${state.user.points || 0}</b>
+      <span class="muted">AC ${state.user.solved_count || 0} 题</span>
+      <span style="flex:1"></span>
+      <a class="btn btn-sm" href="#/me">个人主页</a>
+      <a class="btn btn-sm" href="#/rank">排行榜</a>
+    </div>` : ''}
     <div class="card">
       <table>
         <thead><tr><th>#</th><th>题目</th><th>难度</th><th>标签</th></tr></thead>
@@ -1139,7 +1147,10 @@ document.addEventListener('click', (e) => {
   const act = el.dataset.action;
 
   switch (act) {
-    case 'show-login': openAuthModal(); break;
+    case 'side-login': sideLogin(); break;
+    case 'side-register': sideRegister(); break;
+    case 'side-tab': sideTab(el.dataset.tab); break;
+    case 'show-login': openSideAuth(); break;
 
     case 'logout':
       API.post('/api/logout').catch(() => {});
@@ -1325,6 +1336,115 @@ function initTheme() {
   if (btn) btn.textContent = dark ? '☀️' : '🌙';
 }
 
+// ---------- 液态玻璃 + 低性能模式 ----------
+function initLiquid() {
+  document.body.classList.add('liquid-bg');
+  const p = localStorage.getItem('oj_perf');
+  if (p === 'low') document.body.classList.add('low-perf');
+  const k = document.getElementById('perf-toggle');
+  if (k) k.textContent = (p === 'low') ? '🌀' : '⚡';
+}
+
+// ---------- 左侧登录栏 ----------
+function openSideAuth() {
+  document.body.classList.add('side-on');
+  document.getElementById('side-auth').classList.add('show');
+  window.scrollTo(0, 0);
+  renderSideAuth();
+}
+function closeSideAuth() {
+  if (state.user) { /* 登录后保持展示，不关 */ return; }
+  document.body.classList.remove('side-on');
+  document.getElementById('side-auth').classList.remove('show');
+}
+async function renderSideAuth() {
+  const box = document.getElementById('side-auth-content');
+  if (!box) return;
+  if (!state.user) {
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:22px">🤖</span>
+        <h3 style="margin:0">比特 OJ</h3>
+      </div>
+      <p class="muted" style="margin:6px 0 14px">登录后开始刷题</p>
+      <div class="auth-tabs" style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn btn-sm active" id="side-tab-login" data-action="side-tab" data-tab="login">登 录</button>
+        <button class="btn btn-sm" id="side-tab-reg" data-action="side-tab" data-tab="register">注 册</button>
+      </div>
+      <div class="side-form">
+        <label>用户名</label><input id="side-username" autocomplete="username">
+        <label style="margin-top:10px">密码</label><input id="side-password" type="password" autocomplete="current-password">
+        <button class="btn btn-primary" style="width:100%;margin-top:14px" data-action="side-login">进入</button>
+        <p class="muted" id="side-auth-status" style="font-size:12px;margin-top:8px"></p>
+      </div>
+    `;
+  } else {
+    const pts = state.user.points || 0;
+    box.innerHTML = `
+      <div style="text-align:center">
+        <div style="width:64px;height:64px;border-radius:50%;margin:6px auto 10px;background:linear-gradient(135deg,#22c55e,#0ea5e9);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff">${escapeHtml(state.user.username.charAt(0).toUpperCase())}</div>
+        <h3 style="margin:0">${escapeHtml(state.user.username)}</h3>
+        <p class="muted" style="margin:4px 0">${state.user.role === 'admin' ? '👑 超级管理员' : state.user.role === 'class_admin' ? '🏫 班级管理员' : '👤 普通用户'}</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin:12px 0">
+          <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:8px 14px"><b>⭐ ${pts}</b><div class="muted" style="font-size:12px">积分</div></div>
+          <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:8px 14px"><b>✅ ${state.user.solved_count||0}</b><div class="muted" style="font-size:12px">AC</div></div>
+        </div>
+      </div>
+      <a class="btn btn-sm" style="width:100%" href="#/me">👤 个人主页</a>
+      <a class="btn btn-sm" style="width:100%;margin-top:8px" href="#/profile">📊 段位进度</a>
+      <button class="btn btn-danger btn-sm" style="width:100%;margin-top:8px" data-action="logout">退出登录</button>
+    `;
+  }
+}
+async function sideLogin() {
+  const u = document.getElementById('side-username').value.trim();
+  const p = document.getElementById('side-password').value;
+  const st = document.getElementById('side-auth-status');
+  if (!u || !p) { st.textContent = '用户名和密码都要填哦'; return; }
+  try {
+    const d = await API.post('/api/login', { username: u, password: p });
+    API.setToken(d.token);
+    state.user = { username: d.username, role: d.role, points: d.points || 0, solved_count: d.solved_count || 0 };
+    st.textContent = '✅ 欢迎回来！';
+    await refreshUser();
+    renderSideAuth();
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+}
+function sideTab(tab) {
+  const loginBtn = document.getElementById('side-tab-login');
+  const regBtn = document.getElementById('side-tab-reg');
+  const btn = document.querySelector('[data-action="side-login"]');
+  const st = document.getElementById('side-auth-status');
+  if (st) st.textContent = '';
+  if (!loginBtn || !btn) return;
+  if (tab === 'register') {
+    loginBtn.classList.remove('active'); regBtn.classList.add('active');
+    btn.textContent = '注册新号';
+    btn.dataset.action = 'side-register';
+  } else {
+    regBtn.classList.remove('active'); loginBtn.classList.add('active');
+    btn.textContent = '进入';
+    btn.dataset.action = 'side-login';
+  }
+}
+async function sideRegister() {
+  const u = document.getElementById('side-username').value.trim();
+  const p = document.getElementById('side-password').value;
+  const st = document.getElementById('side-auth-status');
+  if (!u || !p) { st.textContent = '用户名和密码都要填哦'; return; }
+  try {
+    const d = await API.post('/api/register', { username: u, password: p });
+    API.setToken(d.token);
+    state.user = { username: d.username, role: d.role, points: 0, solved_count: 0 };
+    st.textContent = '🎉 注册成功！';
+    await refreshUser();
+    renderSideAuth();
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+}
+window.openSideAuth = openSideAuth;
+// 旧调用（搜索/下拉等）也改走左侧栏
+window.openAuthModal = openSideAuth;
+
 document.addEventListener('click', (e) => {
   if (e.target.closest && e.target.closest('#theme-toggle')) {
     const dark = document.body.classList.toggle('dark');
@@ -1332,10 +1452,18 @@ document.addEventListener('click', (e) => {
     const btn = document.getElementById('theme-toggle');
     if (btn) btn.textContent = dark ? '☀️' : '🌙';
   }
+  if (e.target.closest && e.target.closest('#perf-toggle')) {
+    const low = document.body.classList.toggle('low-perf');
+    localStorage.setItem('oj_perf', low ? 'low' : 'full');
+    const k = document.getElementById('perf-toggle');
+    if (k) k.textContent = low ? '🌀' : '⚡';
+  }
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
   initTheme();
+  initLiquid();
+  openSideAuth();
   $('confirm-ok').addEventListener('click', () => {
     if (confirmOk) { const cb = confirmOk; cb(); }
     closeConfirmModal();

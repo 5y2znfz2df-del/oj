@@ -26,12 +26,18 @@
         <a href="#/shop" data-nav="shop">商城</a>
         <a href="#/admin" data-nav="admin" id="nav-admin" style="display:none">管理后台</a>
       </div>
-      <button class="btn-link" id="theme-toggle" title="切换黑夜模式" style="margin-right:10px">🌙</button>
+      <button class="btn-link" id="theme-toggle" title="切换黑夜模式" style="margin-right:8px">🌙</button>
+      <button class="btn-link" id="perf-toggle" title="切换低性能模式" style="margin-right:10px">⚡</button>
       <div class="nav-user" id="nav-user">
         <!-- 未登录：登录/注册按钮；登录后：用户名+积分+退出 -->
       </div>
     </div>
   </nav>
+
+  <!-- 左侧登录栏（液态玻璃：未登录显示表单，登录后显示用户卡） -->
+  <aside id="side-auth">
+    <div id="side-auth-content"><div class="empty">加载中…</div></div>
+  </aside>
 
   <!-- 页面容器（SPA） -->
   <main id="page" class="container"></main>

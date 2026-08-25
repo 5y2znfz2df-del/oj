@@ -402,3 +402,128 @@ body.dark textarea::placeholder { color: #64748b; }
   scrollbar-width: none;
 }
 .nav-links::-webkit-scrollbar { display: none; }
+
+/* ═══════════ iOS26 液态玻璃主题 ═══════════ */
+html { min-height: 100%; }
+body {
+  background: url('/bg.jpg') center/cover fixed no-repeat #000;
+}
+
+/* 液态玻璃核心：半透明 + 模糊 + 高光边缘 */
+.liquid {
+  background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.4) inset,
+    0 12px 40px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  position: relative;
+}
+/* 玻璃斜向高光 */
+.liquid::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0.04) 30%, transparent 55%);
+  mix-blend-mode: screen;
+}
+
+/* ---------- 全局容器升级为液态玻璃 ---------- */
+body:not(.low-perf) .navbar { background: rgba(10, 12, 18, 0.55); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%); border-bottom: 1px solid rgba(255,255,255,0.10); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+body:not(.low-perf) .card {
+  background: rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 18px;
+  box-shadow: 0 10px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.16);
+}
+body:not(.low-perf) .stat-card {
+  background: rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+}
+body:not(.low-perf) .sample-box,
+body:not(.low-perf) .detail-box,
+body:not(.low-perf) .note-card {
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+body:not(.low-perf) th { background: rgba(255,255,255,0.05); }
+body:not(.low-perf) .editor-wrap { background: rgba(0,0,0,0.35); backdrop-filter: blur(12px); border-color: rgba(255,255,255,0.1); }
+body:not(.low-perf) .footer { background: rgba(0,0,0,0.3); backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.08); }
+body:not(.low-perf) .tag { background: rgba(255,255,255,0.12); color: #dbe4ff; }
+body:not(.low-perf) .profile-tab.active { color: #fff; }
+body:not(.low-perf) .nav-links a { color: #e6e9f2; }
+body:not(.low-perf) .nav-links a.active { color: #0b1220; }
+
+/* 全局文字适配深色底 */
+body.liquid-bg { color: #eef1f8; }
+body.liquid-bg .muted { color: #aeb8cc; }
+body.liquid-bg input,
+body.liquid-bg textarea,
+body.liquid-bg select {
+  color: #eef1f8;
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16);
+}
+body.liquid-bg input::placeholder,
+body.liquid-bg textarea::placeholder { color: #8b96ab; }
+body.liquid-bg .btn { border-color: rgba(255,255,255,0.18); color: #eef1f8; }
+body.liquid-bg .btn-primary { background: rgba(34,197,94,0.75); border-color: transparent; color: #fff; }
+body.liquid-bg a.link { color: #8fd6ff; }
+body.liquid-bg .empty { color: #93a0b6; }
+body.liquid-bg .brand { color: #fff; }
+body.liquid-bg .badge { color: #0b1220; }
+body.liquid-bg .profile-sig { color: #c3cbda; }
+
+/* ---------- 低性能模式（磨砂玻璃简易版） ---------- */
+body.low-perf body,
+body.low-perf .card,
+body.low-perf .navbar,
+body.low-perf .stat-card,
+body.low-perf .sample-box,
+body.low-perf .note-card,
+body.low-perf .editor-wrap,
+body.low-perf .footer {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+body.low-perf .card,
+body.low-perf .stat-card { background: rgba(18, 24, 36, 0.88); }
+body.low-perf .navbar { background: rgba(8, 10, 16, 0.94); }
+body.low-perf .sample-box,
+body.low-perf .note-card,
+body.low-perf .editor-wrap { background: rgba(10, 14, 22, 0.92); }
+
+/* ---------- 左侧登录栏（液态玻璃） ---------- */
+#side-auth {
+  position: fixed; left: 14px; top: 70px; bottom: 14px;
+  width: 258px; z-index: 60;
+  background: rgba(20, 26, 40, 0.55);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 22px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.18);
+  padding: 20px 16px;
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+body.low-perf #side-auth { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(14, 19, 30, 0.94); }
+#side-auth.show { display: flex; }
+body.side-on { padding-left: 286px; }
+@media (max-width: 960px) {
+  body.side-on { padding-left: 0; }
+  #side-auth { width: 240px; left: 8px; top: 62px; }
+}
