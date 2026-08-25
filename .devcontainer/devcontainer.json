@@ -1,0 +1,13 @@
+{
+  "name": "比特 OJ",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "比特 OJ 网页",
+      "visibility": "public",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postStartCommand": "sudo service mysql start 2>/dev/null || true; cd /workspaces/oj && ./run.sh start 2>/dev/null || true"
+}
