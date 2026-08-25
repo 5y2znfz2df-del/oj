@@ -392,6 +392,16 @@ body.dark select {
 }
 body.dark input::placeholder,
 body.dark textarea::placeholder { color: #64748b; }
+/* 修复：暗色模式下普通按钮白底浅字看不清 */
+body.dark .btn:not(.btn-primary):not(.btn-danger):not(.btn-link) {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: var(--border);
+}
+body.dark .btn:not(.btn-primary):not(.btn-danger):not(.btn-link):hover {
+  color: #fff;
+  background: #263449;
+}
 
 /* 导航不换行：选项多时横向滚动 */
 .nav-inner { flex-wrap: nowrap; }
@@ -478,6 +488,15 @@ body.liquid-bg select {
 body.liquid-bg input::placeholder,
 body.liquid-bg textarea::placeholder { color: #8b96ab; }
 body.liquid-bg .btn { border-color: rgba(255,255,255,0.18); color: #eef1f8; }
+/* 修复：液态玻璃下 .btn 缺背景导致白底浅字看不清 */
+body.liquid-bg .btn:not(.btn-primary):not(.btn-danger):not(.btn-link) {
+  background: rgba(255,255,255,0.10);
+  color: #eef1f8;
+}
+body.liquid-bg .btn:not(.btn-primary):not(.btn-danger):not(.btn-link):hover {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+}
 body.liquid-bg .btn-primary { background: rgba(34,197,94,0.75); border-color: transparent; color: #fff; }
 body.liquid-bg a.link { color: #8fd6ff; }
 body.liquid-bg .empty { color: #93a0b6; }
