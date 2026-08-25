@@ -421,15 +421,15 @@ body {
   background-image: image-set(url('/bg.webp') type('image/webp') 1x, url('/bg.jpg') type('image/jpeg') 1x);  /* 支持 WebP 的浏览器优先用 69KB 的 webp */
   background-position: center;
   background-size: cover;
-  background-attachment: fixed;
+  background-attachment: scroll;   /* 不用 fixed：滚动时背景整层重绘很卡 */
   background-repeat: no-repeat;
 }
 
 /* 液态玻璃核心：半透明 + 模糊 + 高光边缘 */
 .liquid {
   background: rgba(255, 255, 255, 0.08);
-  -webkit-backdrop-filter: blur(24px) saturate(170%);
-  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 20px;
   box-shadow:
@@ -449,19 +449,19 @@ body {
 }
 
 /* ---------- 全局容器升级为液态玻璃 ---------- */
-body:not(.low-perf) .navbar { background: rgba(10, 12, 18, 0.55); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%); border-bottom: 1px solid rgba(255,255,255,0.10); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+body:not(.low-perf) .navbar { background: rgba(10, 12, 18, 0.55); backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%); border-bottom: 1px solid rgba(255,255,255,0.10); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
 body:not(.low-perf) .card {
   background: rgba(255, 255, 255, 0.07);
-  -webkit-backdrop-filter: blur(22px) saturate(170%);
-  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 18px;
   box-shadow: 0 10px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.16);
 }
 body:not(.low-perf) .stat-card {
   background: rgba(255, 255, 255, 0.06);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 16px;
 }
@@ -475,7 +475,7 @@ body:not(.low-perf) .note-card {
 }
 body:not(.low-perf) th { background: rgba(255,255,255,0.05); }
 body:not(.low-perf) .editor-wrap { background: rgba(0,0,0,0.35); backdrop-filter: blur(12px); border-color: rgba(255,255,255,0.1); }
-body:not(.low-perf) .footer { background: rgba(0,0,0,0.3); backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.08); }
+body:not(.low-perf) .footer { background: rgba(0,0,0,0.3); backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.08); }
 body:not(.low-perf) .tag { background: rgba(255,255,255,0.12); color: #dbe4ff; }
 body:not(.low-perf) .profile-tab.active { color: #fff; }
 body:not(.low-perf) .nav-links a { color: #e6e9f2; }
@@ -534,8 +534,8 @@ body.low-perf .editor-wrap { background: rgba(10, 14, 22, 0.92); }
   position: fixed; left: 14px; top: 70px; bottom: 14px;
   width: 258px; z-index: 60;
   background: rgba(20, 26, 40, 0.55);
-  -webkit-backdrop-filter: blur(30px) saturate(160%);
-  backdrop-filter: blur(30px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
   border: 1px solid rgba(255,255,255,0.14);
   border-radius: 22px;
   box-shadow: 0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.18);

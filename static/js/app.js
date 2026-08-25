@@ -1409,7 +1409,7 @@ async function sideLogin() {
 function sideTab(tab) {
   const loginBtn = document.getElementById('side-tab-login');
   const regBtn = document.getElementById('side-tab-reg');
-  const btn = document.querySelector('[data-action="side-login"]');
+  const btn = document.querySelector('.side-form .btn-primary');  // 稳定选择器：data-action 会被切换，不能依赖它
   const st = document.getElementById('side-auth-status');
   if (st) st.textContent = '';
   if (!loginBtn || !btn) return;
