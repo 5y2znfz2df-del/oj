@@ -1374,7 +1374,7 @@ async function renderSideAuth() {
       <div class="side-form">
         <label>用户名</label><input id="side-username" autocomplete="username">
         <label style="margin-top:10px">密码</label><input id="side-password" type="password" autocomplete="current-password">
-        <button class="btn btn-primary" style="width:100%;margin-top:14px" data-action="side-login">进入</button>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px" id="side-submit-btn" data-action="side-login">进入</button>
         <p class="muted" id="side-auth-status" style="font-size:12px;margin-top:8px"></p>
       </div>
     `;
@@ -1413,7 +1413,7 @@ async function sideLogin() {
 function sideTab(tab) {
   const loginBtn = document.getElementById('side-tab-login');
   const regBtn = document.getElementById('side-tab-reg');
-  const btn = document.querySelector('[data-action="side-login"]');
+  const btn = document.getElementById('side-submit-btn');
   const st = document.getElementById('side-auth-status');
   if (st) st.textContent = '';
   if (!loginBtn || !btn) return;
