@@ -566,3 +566,23 @@ body.liquid-bg .tag {
 
 /* 4. 导航右侧控件间距（液态玻璃重构后挤在一起） */
 .nav-user .btn-link { margin-left: 4px; }
+
+/* ---------- 2026-09-14 液态玻璃修复·二：按钮文字隐身 ---------- */
+/* 根因：.btn 背景仍为 #fff，液态玻璃下文字被改成近白色 → 白底白字看不见 */
+body.liquid-bg .btn {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.22);
+  color: #eef1f8;
+}
+/* 侧栏「登 录/注 册」tab 按钮：未选中=深色玻璃底，选中=绿色高亮 */
+#side-auth .auth-tabs .btn {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.20);
+  color: #c8d2e8;
+}
+#side-auth .auth-tabs .btn.active {
+  background: rgba(34,197,94,0.30);
+  border-color: rgba(34,197,94,0.65);
+  color: #fff;
+  font-weight: 600;
+}
