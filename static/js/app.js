@@ -1372,8 +1372,8 @@ async function renderSideAuth() {
         <button class="btn btn-sm" id="side-tab-reg" data-action="side-tab" data-tab="register">注 册</button>
       </div>
       <div class="side-form">
-        <label>用户名</label><input id="side-username" autocomplete="username">
-        <label style="margin-top:10px">密码</label><input id="side-password" type="password" autocomplete="current-password">
+        <label>用户名</label><input id="side-username" placeholder="用户名" autocomplete="username">
+        <label style="margin-top:10px">密码</label><input id="side-password" type="password" placeholder="密码" autocomplete="current-password">
         <button class="btn btn-primary" style="width:100%;margin-top:14px" id="side-submit-btn" data-action="side-login">进入</button>
         <p class="muted" id="side-auth-status" style="font-size:12px;margin-top:8px"></p>
       </div>
