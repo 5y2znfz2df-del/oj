@@ -527,3 +527,42 @@ body.side-on { padding-left: 286px; }
   body.side-on { padding-left: 0; }
   #side-auth { width: 240px; left: 8px; top: 62px; }
 }
+
+/* ---------- 2026-09-14 液态玻璃回归修复 ---------- */
+/* 1. 左侧登录栏输入框可读性（此前无任何专属样式，暗色玻璃下隐身） */
+#side-auth .side-form input {
+  background: rgba(255,255,255,0.16);
+  border: 1px solid rgba(255,255,255,0.38);
+  color: #f4f6fb;
+  border-radius: 8px;
+}
+#side-auth .side-form input::placeholder { color: #9aa7bd; }
+#side-auth .side-form input:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+  background: rgba(255,255,255,0.22);
+}
+#side-auth label { color: #b9c3d6; }
+
+/* 2. 表格列宽：编号列居中窄排，难度列不挤压标签 */
+.card table th:nth-child(1),
+.card table td:nth-child(1) { width: 44px; text-align: center; }
+.card table th:nth-child(3),
+.card table td:nth-child(3) { width: 96px; white-space: nowrap; }
+.diff-badge { display: inline-block; white-space: nowrap; }
+
+/* 3. 液态玻璃下难度徽章/标签适配 */
+body.liquid-bg .diff-badge {
+  background: rgba(255,255,255,0.12);
+  color: #eef1f8;
+}
+body.liquid-bg .diff-1 { color: #4ade80; }
+body.liquid-bg .diff-2 { color: #7dd3fc; }
+body.liquid-bg .diff-3 { color: #c4b5fd; }
+body.liquid-bg .diff-4 { color: #fca5a5; }
+body.liquid-bg .tag {
+  background: rgba(255,255,255,0.10);
+}
+
+/* 4. 导航右侧控件间距（液态玻璃重构后挤在一起） */
+.nav-user .btn-link { margin-left: 4px; }
