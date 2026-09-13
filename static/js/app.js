@@ -179,7 +179,6 @@ async function renderMyProfile(page) {
 }
 
 async function renderAiChat(page) {
-  if (!requireLogin(() => renderAiChat(page))) return;
   page.innerHTML = `
     <h1 class="page-title">🤖 AI 助手</h1>
     <div class="card" id="ai-chat-box" style="height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:14px">
@@ -1328,13 +1327,7 @@ async function adminAddItem() {
 
 // ---------- 启动 ----------
 // ---------- 黑夜模式 ----------
-function initTheme() {
-  const saved = localStorage.getItem('oj_theme');
-  const dark = saved === 'dark';
-  document.body.classList.toggle('dark', dark);
-  const btn = document.getElementById('theme-toggle');
-  if (btn) btn.textContent = dark ? '☀️' : '🌙';
-}
+function initTheme() { /* 主题切换已移除，固定液态玻璃样式 */ }
 
 // ---------- 液态玻璃 + 低性能模式 ----------
 function initLiquid() {
@@ -1446,12 +1439,6 @@ window.openSideAuth = openSideAuth;
 window.openAuthModal = openSideAuth;
 
 document.addEventListener('click', (e) => {
-  if (e.target.closest && e.target.closest('#theme-toggle')) {
-    const dark = document.body.classList.toggle('dark');
-    localStorage.setItem('oj_theme', dark ? 'dark' : 'light');
-    const btn = document.getElementById('theme-toggle');
-    if (btn) btn.textContent = dark ? '☀️' : '🌙';
-  }
   if (e.target.closest && e.target.closest('#perf-toggle')) {
     const low = document.body.classList.toggle('low-perf');
     localStorage.setItem('oj_perf', low ? 'low' : 'full');
@@ -1461,7 +1448,6 @@ document.addEventListener('click', (e) => {
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
-  initTheme();
   initLiquid();
   openSideAuth();
   $('confirm-ok').addEventListener('click', () => {

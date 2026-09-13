@@ -586,3 +586,10 @@ body.liquid-bg .btn {
   color: #fff;
   font-weight: 600;
 }
+
+/* ---------- 2026-09-14 修复·三：hover 高亮调暗 + 主题切换移除 ---------- */
+/* 题目表格行 hover：液态玻璃下用柔和暗色，不用刺眼白底 */
+body.liquid-bg tr:hover td { background: rgba(255,255,255,0.05); }
+body.liquid-bg a.link:hover { color: #7cc7ff; text-decoration: underline; }
+/* 低性能模式也不刺眼 */
+body.liquid-bg.low-perf tr:hover td { background: rgba(255,255,255,0.07); }
