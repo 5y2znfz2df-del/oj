@@ -1384,7 +1384,6 @@ async function renderSideAuth() {
         </div>
       </div>
       <a class="btn btn-sm" style="width:100%" href="#/me">👤 个人主页</a>
-      <a class="btn btn-sm" style="width:100%;margin-top:8px" href="#/profile">📊 段位进度</a>
       <button class="btn btn-danger btn-sm" style="width:100%;margin-top:8px" data-action="logout">退出登录</button>
     `;
   }
