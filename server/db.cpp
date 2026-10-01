@@ -12,7 +12,9 @@ bool DB::connect(const std::string& host, int port,
 }
 
 bool DB::reconnect() {
-    if (conn_) { mysql_close(conn_); conn_ = nullptr; }
+    // 绝不 mysql_close 旧句柄：这个 macOS 14 编译的 libmysqlclient 在已断开的连接上
+    // 调用任何库函数（mysql_ping/mysql_close/mysql_real_query）都会崩（SIGSEGV/SIGABRT）。
+    // 检测到连接断开后直接丢弃引用重建，旧句柄交给进程退出/GC 回收，泄漏量可忽略。
     conn_ = mysql_init(nullptr);
     if (!conn_) return false;
     // 不再设 MYSQL_OPT_RECONNECT（MySQL 8.0 deprecated，且会报错）
@@ -67,10 +69,10 @@ bool DB::query(const std::string& sql) {
             err != 2003 /*CR_CONN_HOST_ERROR*/) {
             return false;
         }
-        // 连接已死：必须关掉并置空，否则 ensure_conn() 看到 conn_ 非空会跳过重连，
-        // 第二次尝试又撞同一个死连接（2026-10-01 修复）
+        // 连接已死：绝不再碰旧句柄（mysql_close 在死连接上会段错误），直接丢弃引用，
+        // 下一轮 ensure_conn() 会走 reconnect() 重建（2026-10-01 二次修复）
         fprintf(stderr, "[db] 检测到连接断开，准备重连...\n");
-        if (conn_) { mysql_close(conn_); conn_ = nullptr; }
+        conn_ = nullptr;
     }
     return false;
 }
@@ -85,8 +87,8 @@ std::vector<std::vector<std::string>> DB::rows(const std::string& sql) {
                     attempt, err, mysql_error(conn_), sql.c_str());
             if (err != 2006 && err != 2013 && err != 2003) return out;
             fprintf(stderr, "[db] 检测到连接断开，准备重连...\n");
-            // 同上：死连接必须关掉置空，下一轮 ensure_conn() 才能真正重连
-            if (conn_) { mysql_close(conn_); conn_ = nullptr; }
+            // 同上：死连接直接丢弃引用，绝不 close，下一轮 ensure_conn() 重建
+            conn_ = nullptr;
             continue;
         }
         MYSQL_RES* r = mysql_store_result(conn_);
