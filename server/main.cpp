@@ -4,6 +4,7 @@
 // 依赖：cpp-httplib / nlohmann-json / MySQL C API / OpenSSL
 // =============================================
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -738,6 +739,38 @@ static void register_routes(httplib::Server& svr) {
         respond(res, ok_j({{"items", list}}));
     });
 
+    // ========== 每日打卡：随机 +1~10 积分 ==========
+    // GET /api/checkin/status  查今天是否已打卡
+    svr.Get("/api/checkin/status", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res); if (u.empty()) return;
+        time_t now = time(nullptr); struct tm tm; localtime_r(&now, &tm);
+        char d[16]; strftime(d, sizeof(d), "%Y-%m-%d", &tm);
+        auto r = g_db.rows("SELECT points FROM checkins WHERE user_id=" +
+                            to_string(u["id"].get<long long>()) +
+                            " AND checkin_date='" + string(d) + "'");
+        bool done = !r.empty();
+        respond(res, ok_j({{ "checked_in", done }, {"points", done ? stoi(r[0][0]) : 0}}));
+    });
+    // POST /api/checkin  打卡（每日一次，随机 1~10 分）
+    svr.Post("/api/checkin", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = require_user(req, res); if (u.empty()) return;
+        lock_guard<mutex> lk(g_biz_mu);
+        time_t now = time(nullptr); struct tm tm; localtime_r(&now, &tm);
+        char d[16]; strftime(d, sizeof(d), "%Y-%m-%d", &tm);
+        long long uid = u["id"].get<long long>();
+        auto r = g_db.rows("SELECT points FROM checkins WHERE user_id=" + to_string(uid) +
+                            " AND checkin_date='" + string(d) + "'");
+        if (!r.empty()) return fail(res, 400, "今天已经打过卡啦，明天再来！");
+        mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
+        int pts = 1 + (int)(rng() % 10);
+        g_db.query("INSERT INTO checkins(user_id,checkin_date,points) VALUES(" +
+                   to_string(uid) + ",'" + string(d) + "'," + to_string(pts) + ")");
+        g_db.query("UPDATE users SET points=points+" + to_string(pts) + " WHERE id=" + to_string(uid));
+        auto r2 = g_db.rows("SELECT points FROM users WHERE id=" + to_string(uid));
+        respond(res, ok_j({{ "points_gained", pts },
+                           {"total_points", r2.empty() ? 0 : stoi(r2[0][0])}}));
+    });
+
     // ========== 管理端：用户与角色 ==========
     svr.Get("/api/admin/users", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_admin(req, res); if (u.empty()) return;
@@ -1023,7 +1056,7 @@ static void register_routes(httplib::Server& svr) {
             return f;
         };
 
-        svr.Post("/api/files/upload", [&files_dir, &gen_file_id, &load_files](const httplib::Request& req, httplib::Response& res) {
+        svr.Post("/api/files/upload", [&gen_file_id, &load_files](const httplib::Request& req, httplib::Response& res) {
             auto u = require_user(req, res); if (u.empty()) return;
             if (!req.has_file("file")) return fail(res, 400, "未选择文件");
             const auto& f = req.get_file_value("file");
@@ -1140,7 +1173,7 @@ static void register_routes(httplib::Server& svr) {
     };
 
     // 查询是否已配置 AI key（不返回 key 本体）+ 当前平台
-    svr.Get("/api/ai/status", [&ai_prov](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/api/ai/status", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto rows = g_db.rows("SELECT ai_api_key, ai_provider FROM users WHERE id=" + to_string(u["id"].get<long long>()));
         string key = rows.empty() ? "" : rows[0][0];
@@ -1168,7 +1201,7 @@ static void register_routes(httplib::Server& svr) {
     });
 
     // AI 对话（费用走用户自己的 key，按平台调用）
-    svr.Post("/api/ai/chat", [&ai_prov](const httplib::Request& req, httplib::Response& res) {
+    svr.Post("/api/ai/chat", [](const httplib::Request& req, httplib::Response& res) {
         auto u = require_user(req, res); if (u.empty()) return;
         auto b = parse_body(req);
         string msg = b.value("message", "");
@@ -1370,7 +1403,8 @@ int main() {
     string dbpwd = cfg.value("db_password", "");
     string dbn   = cfg.value("db_name", "oj");
 
-    if (!g_db.connect(dbh, dbp, dbu, dbpwd, dbn)) {
+    if (!g_db.connect(dbh, dbp, dbu, dbpwd, dbn,
+                      (getenv("HOME") ? std::string(getenv("HOME")) : "/Users/fuxiang") + "/mysql/mysql.sock")) {
         fprintf(stderr, "[oj] MySQL 连接失败，请检查 server/config.json 与数据库状态\n");
         return 1;
     }

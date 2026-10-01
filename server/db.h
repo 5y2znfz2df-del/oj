@@ -13,7 +13,8 @@ public:
 
     bool connect(const std::string& host, int port,
                  const std::string& user, const std::string& pass,
-                 const std::string& dbname);
+                 const std::string& dbname,
+                 const std::string& unix_socket = "");
 
     // 执行 UPDATE / INSERT / DELETE 等（自动重连+重试）
     bool query(const std::string& sql);
@@ -34,6 +35,6 @@ private:
     bool reconnect();     // 强制重连
 
     MYSQL* conn_ = nullptr;
-    std::string host_, user_, pass_, dbname_;
+    std::string host_, user_, pass_, dbname_, socket_;
     int port_ = 3306;
 };

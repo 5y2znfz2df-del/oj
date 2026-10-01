@@ -6,8 +6,10 @@
 
 bool DB::connect(const std::string& host, int port,
                  const std::string& user, const std::string& pass,
-                 const std::string& dbname) {
+                 const std::string& dbname,
+                 const std::string& unix_socket) {
     host_ = host; port_ = port; user_ = user; pass_ = pass; dbname_ = dbname;
+    socket_ = unix_socket;
     return reconnect();
 }
 
@@ -23,8 +25,13 @@ bool DB::reconnect() {
     // 崩溃栈 libssl.3.dylib::SSL_read → libmysqlclient::vio_ssl_read；回环不走公网，无需加密）
     unsigned int ssl_mode = SSL_MODE_DISABLED;
     mysql_options(conn_, MYSQL_OPT_SSL_MODE, &ssl_mode);
-    if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(), pass_.c_str(),
-                            dbname_.c_str(), port_, nullptr, 0)) {
+    // 优先走 unix socket（2026-10-01 根治：这台 mac14 库在 mac12 上走 TCP 反复崩——
+    // mysql_ping/mysql_close/mysql_real_query/net_read_packet 各种 SIGSEGV；
+    // unix socket 路径一整天实测从未崩过）。socket 非空时 host 传 "localhost" 即可。
+    const char* sock = socket_.empty() ? nullptr : socket_.c_str();
+    const char* h = socket_.empty() ? host_.c_str() : "localhost";
+    if (!mysql_real_connect(conn_, h, user_.c_str(), pass_.c_str(),
+                            dbname_.c_str(), port_, sock, 0)) {
         fprintf(stderr, "[db] 连接失败: %s\n", mysql_error(conn_));
         mysql_close(conn_);
         conn_ = nullptr;
