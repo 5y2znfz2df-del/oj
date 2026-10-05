@@ -5,3 +5,7 @@ logs/
 data/
 server/*.o
 server/oj_server
+
+# 密码文件绝不入库
+.admin_pw.txt
+VScode/

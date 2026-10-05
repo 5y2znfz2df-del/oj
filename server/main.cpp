@@ -73,12 +73,21 @@ static json current_user(const httplib::Request& req) {
     if (tok.empty()) return json();
     Session s;
     if (!g_auth.check(g_db, tok, s)) return json();
-    auto rows = g_db.rows("SELECT id,username,role,points,solved_count FROM users"
+    auto rows = g_db.rows("SELECT id,username,role,points,solved_count,real_name,nickname FROM users"
                           " WHERE username='" + g_db.escape(s.username) + "' LIMIT 1");
     if (rows.empty()) return json();
     json u = {{"id", stoll(rows[0][0])}, {"username", rows[0][1]},
               {"role", rows[0][2]},       {"points", stoi(rows[0][3])},
               {"solved_count", stoi(rows[0][4])}};
+    string rn = rows[0][5], nn = rows[0][6];
+    // 显示名：昵称 > FBOJ(admin) > 用户名（2026-10-05 用户体系升级）
+    string dn;
+    if (!nn.empty()) dn = nn;
+    else if (rows[0][1] == "admin") dn = "FBOJ";
+    else dn = rows[0][1];
+    u["real_name"] = rn;
+    u["nickname"] = nn;
+    u["display_name"] = dn;
     return u;
 }
 static json require_user(const httplib::Request& req, httplib::Response& res) {
@@ -145,28 +154,51 @@ static void register_routes(httplib::Server& svr) {
     svr.Post("/api/register", [](const httplib::Request& req, httplib::Response& res) {
         auto b = parse_body(req);
         string name = b.value("username", ""), pass = b.value("password", "");
+        string rn = b.value("real_name", "");
         if (name.size() < 3 || name.size() > 32) return fail(res, 400, "用户名长度须为 3-32 字符");
         if (pass.size() < 6 || pass.size() > 64) return fail(res, 400, "密码长度须为 6-64 字符");
+        // 2026-10-05 实名制：注册必填真实姓名（1-20 位汉字/字母/数字）
+        if (rn.empty()) return fail(res, 400, "请填写真实姓名（1-20 位汉字/字母/数字）");
+        for (char c : rn) {
+            bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+            unsigned char uc = (unsigned char)c;
+            ok = ok || (uc >= 0x80); // 汉字（UTF-8 多字节）
+            if (!ok) return fail(res, 400, "真实姓名只能含汉字/英文字母/数字");
+        }
+        if (rn.size() > 20) return fail(res, 400, "真实姓名过长（最多 20 字）");
+        string rn_l = rn;
+        for (auto& c : rn_l) c = tolower((unsigned char)c);
+        if (rn_l == "admin" || rn_l == "fboj") return fail(res, 400, "真实姓名不能是 FBOJ/admin");
         auto dup = g_db.rows("SELECT id FROM users WHERE username='" + g_db.escape(name) + "'");
         if (!dup.empty()) return fail(res, 400, "用户名已被注册，换一个试试");
-        if (!g_db.query("INSERT INTO users(username,password,role) VALUES('" +
-                        g_db.escape(name) + "','" + Auth::sha256(pass) + "','user')"))
+        if (!g_db.query("INSERT INTO users(username,password,role,real_name,nickname) VALUES('" +
+                        g_db.escape(name) + "','" + Auth::sha256(pass) + "','user','" +
+                        g_db.escape(rn) + "','')"))
             return fail(res, 500, "注册失败，请稍后再试");
         string tok = g_auth.login(g_db, name, "user");
         respond(res, ok_j({{"token", tok}, {"username", name}, {"role", "user"},
-                           {"points", 0}, {"solved_count", 0}}));
+                           {"points", 0}, {"solved_count", 0}, {"real_name", rn}, {"display_name", name}}));
     });
 
     svr.Post("/api/login", [](const httplib::Request& req, httplib::Response& res) {
         auto b = parse_body(req);
         string name = b.value("username", ""), pass = b.value("password", "");
-        auto r = g_db.rows("SELECT id,username,password,role,points,solved_count FROM users"
+        string rn = b.value("real_name", "");
+        auto r = g_db.rows("SELECT id,username,password,role,points,solved_count,real_name,nickname FROM users"
                            " WHERE username='" + g_db.escape(name) + "' LIMIT 1");
         if (r.empty() || r[0][2] != Auth::sha256(pass))
             return fail(res, 401, "用户名或密码错误");
+        // 2026-10-05 实名制：数据库已填真实姓名的用户，登录必须匹配（admin 强制填 admin）
+        if (!r[0][6].empty() && rn != r[0][6])
+            return fail(res, 401, "真实姓名与注册时不一致");
+        // 老用户（real_name 为空）：不强制本次，登录后请补填
         string tok = g_auth.login(g_db, r[0][1], r[0][3]);
-        respond(res, ok_j({{"token", tok}, {"username", r[0][1]}, {"role", r[0][3]},
-                           {"points", stoi(r[0][4])}, {"solved_count", stoi(r[0][5])}}));
+        json j = {{"token", tok}, {"username", r[0][1]}, {"role", r[0][3]},
+                 {"points", stoi(r[0][4])}, {"solved_count", stoi(r[0][5])},
+                 {"real_name", r[0][6]}};
+        string nn = r[0][7];
+        j["display_name"] = !nn.empty() ? nn : (r[0][1] == "admin" ? "FBOJ" : r[0][1]);
+        respond(res, ok_j(j));
     });
 
     svr.Post("/api/logout", [](const httplib::Request& req, httplib::Response& res) {
@@ -233,7 +265,10 @@ static void register_routes(httplib::Server& svr) {
         int ac_count = u["solved_count"].get<int>();
         int points = u["points"].get<int>();
         json user_obj = {{"id", uid}, {"username", u["username"]}, {"role", u["role"]},
-                         {"points", points}, {"solved", ac_count}};
+                         {"points", points}, {"solved", ac_count},
+                         {"real_name", u.value("real_name", "")},
+                         {"nickname", u.value("nickname", "")},
+                         {"display_name", u.value("display_name", u["username"].get<std::string>())}};
         json heat_bd = {{"submissions_7d", sub_total}, {"ac_7d", ac_in_heat}};
         json tier_obj = calc_tier(ac_count, points);
         json resp_obj = {{"user", user_obj}, {"signature", signature},
@@ -251,6 +286,56 @@ static void register_routes(httplib::Server& svr) {
         g_db.query("UPDATE users SET signature='" + g_db.escape(sig) +
                    "' WHERE id=" + to_string(u["id"].get<long long>()));
         respond(res, ok_j({{"signature", sig}}));
+    });
+
+    // ========== 修改昵称（2026-10-05：2-16 位，唯一，7 天冷却） ==========
+    svr.Post("/api/nickname", [](const httplib::Request& req, httplib::Response& res) {
+        auto u = current_user(req);
+        if (u.empty()) return fail(res, 401, "未登录");
+        auto b = parse_body(req);
+        if (!b.contains("nickname")) return fail(res, 400, "nickname 必填");
+        string nn = b["nickname"].get<string>();
+        // 2-16 位汉字/字母/数字/_-（UTF-8 多字节当汉字放行）
+        size_t len = 0; bool valid = true;
+        for (size_t i = 0; i < nn.size(); ) {
+            unsigned char c = (unsigned char)nn[i];
+            if (c < 0x80) { // ASCII：字母数字 _ -
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '_' || c == '-')) { valid = false; break; }
+                len++; i++;
+            } else { // 多字节（汉字/其他 UTF-8）按 1 个字符计
+                int adv = 1; if ((c & 0xE0) == 0xC0) adv = 2; else if ((c & 0xF0) == 0xE0) adv = 3; else if ((c & 0xF8) == 0xF0) adv = 4;
+                len++; i += (size_t)adv;
+            }
+        }
+        if (!valid) return fail(res, 400, "昵称只能含汉字/字母/数字/_/-");
+        if (len < 2 || len > 16) return fail(res, 400, "昵称需 2-16 个字符");
+        // 唯一（别人已用就拒绝）
+        auto dup = g_db.rows("SELECT username FROM users WHERE nickname='" + g_db.escape(nn) +
+                             "' AND username<>'" + g_db.escape(u["username"].get<string>()) + "'");
+        if (!dup.empty()) return fail(res, 409, "这个昵称已被别人用了，换一个吧");
+        // 7 天冷却
+        auto row = g_db.rows("SELECT nickname_updated_at FROM users WHERE id=" + to_string(u["id"].get<long long>()));
+        string last_ts = row.empty() ? "" : row[0][0];
+        long long now = (long long)time(nullptr);
+        if (!last_ts.empty()) {
+            struct tm tm_ = {};
+            if (strptime(last_ts.c_str(), "%Y-%m-%d %H:%M:%S", &tm_)) {
+                long long last = (long long)mktime(&tm_);
+                long long remain = 7LL * 24 * 3600 - (now - last);
+                if (remain > 0) {
+                    int days = (int)((remain + 86399) / 86400);
+                    return fail(res, 429, "昵称刚改过，还要等 " + to_string(days) + " 天才能再改");
+                }
+            }
+        }
+        // 写库
+        char ts[32]; time_t t = now; struct tm tmv; localtime_r(&t, &tmv);
+        strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
+        g_db.query("UPDATE users SET nickname='" + g_db.escape(nn) + "', nickname_updated_at='" + ts +
+                   "' WHERE id=" + to_string(u["id"].get<long long>()));
+        respond(res, ok_j({{"nickname", nn}, {"display_name", nn},
+                           {"locked_until", (long long)(now + 7LL * 24 * 3600)}}));
     });
 
     // ========== 题目笔记 ==========
@@ -416,13 +501,14 @@ static void register_routes(httplib::Server& svr) {
 
     // ========== 排行榜 ==========
     svr.Get("/api/ranklist", [](const httplib::Request& req, httplib::Response& res) {
-        auto r = g_db.rows("SELECT username,solved_count,points FROM users "
+        auto r = g_db.rows("SELECT username,solved_count,points,nickname FROM users "
                            "ORDER BY solved_count DESC, points DESC, id ASC LIMIT 100");
         json list = json::array();
         int rank = 1;
         for (auto& row : r)
             list.push_back({{"rank", rank++}, {"username", row[0]},
-                            {"solved", stoi(row[1])}, {"points", stoi(row[2])}});
+                            {"solved", stoi(row[1])}, {"points", stoi(row[2])},
+                            {"display_name", !row[3].empty() ? row[3] : (row[0] == "admin" ? "FBOJ" : row[0])}});
         respond(res, ok_j({{"ranklist", list}}));
     });
 
@@ -1445,6 +1531,27 @@ int main() {
         if (!chk.empty() && chk[0][0] == "0")
             g_db.query("ALTER TABLE users ADD COLUMN ai_provider VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
     }
+    // schema 自动迁移：users 加 real_name / nickname / nickname_updated_at（2026-10-05 用户体系升级）
+    {
+        auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='real_name'");
+        if (!chk.empty() && chk[0][0] == "0")
+            g_db.query("ALTER TABLE users ADD COLUMN real_name VARCHAR(64) NOT NULL DEFAULT ''");
+    }
+    {
+        auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='nickname'");
+        if (!chk.empty() && chk[0][0] == "0")
+            g_db.query("ALTER TABLE users ADD COLUMN nickname VARCHAR(64) NOT NULL DEFAULT ''");
+    }
+    {
+        auto chk = g_db.rows("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                              " WHERE TABLE_SCHEMA='oj' AND TABLE_NAME='users' AND COLUMN_NAME='nickname_updated_at'");
+        if (!chk.empty() && chk[0][0] == "0")
+            g_db.query("ALTER TABLE users ADD COLUMN nickname_updated_at DATETIME NULL DEFAULT NULL");
+    }
+    // 老库补：admin 的 real_name 固定为 'admin'（登录时填写它）
+    g_db.query("UPDATE users SET real_name='admin' WHERE username='admin' AND real_name=''");
     // schema 自动迁移：题目笔记表 user_notes
     g_db.query("CREATE TABLE IF NOT EXISTS user_notes ("
                "user_id BIGINT NOT NULL,"
@@ -1454,6 +1561,10 @@ int main() {
                "PRIMARY KEY (user_id, problem_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     httplib::Server svr;
+    // 2026-10-05：httplib 默认读超时 5 秒，大文件上传必被掐断（网盘传大包一直失败的真凶）
+    // 调大读超时到 10 分钟（兼容大文件），写超时也放宽
+    svr.set_read_timeout(600, 0);
+    svr.set_write_timeout(600, 0);
     svr.set_mount_point("/", "static");   // 前端静态文件
     register_routes(svr);
 

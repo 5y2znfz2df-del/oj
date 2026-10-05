@@ -3,8 +3,14 @@
 # 用法: make deps && make
 # =============================================
 CXX      = g++
-CXXFLAGS = -O2 -std=c++17 -Wall -Iserver -I/usr/include/mysql
-LDFLAGS  = -lmysqlclient -lcrypto -pthread
+# Mac 兼容：自动探测 mysql_config（Linux 上默认为 /usr/bin/mysql_config）
+MYSQL_CONFIG ?= $(shell command -v mysql_config || echo /Users/fuxiang/mysql/bin/mysql_config)
+MYSQL_CFLAGS := $(shell $(MYSQL_CONFIG) --include 2>/dev/null)
+# 兼容 <mysql/mysql.h> 写法：剥掉 include 路径尾部的 /mysql（macOS 包头文件平铺，Linux 在 mysql/ 子目录）
+MYSQL_CFLAGS := $(MYSQL_CFLAGS:/mysql=)
+MYSQL_LIBS   := $(shell $(MYSQL_CONFIG) --libs 2>/dev/null)
+CXXFLAGS = -O2 -std=c++17 -Wall -Iserver $(MYSQL_CFLAGS)
+LDFLAGS  = $(MYSQL_LIBS) -pthread
 
 SRCS = server/main.cpp server/db.cpp server/store.cpp server/auth.cpp server/judge.cpp
 OBJS = $(SRCS:.cpp=.o)

@@ -1,6 +1,13 @@
 #include "auth.h"
 #include "db.h"
+#ifdef __APPLE__
+// macOS 不自带 openssl 头文件，用系统内置 CommonCrypto 的同款 SHA256 接口
+#include <CommonCrypto/CommonDigest.h>
+#define SHA256              CC_SHA256
+#define SHA256_DIGEST_LENGTH CC_SHA256_DIGEST_LENGTH
+#else
 #include <openssl/sha.h>
+#endif
 #include <cstdio>
 #include <random>
 #include <sstream>

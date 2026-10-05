@@ -11,6 +11,29 @@ function escapeHtml(s) {
 const $ = (id) => document.getElementById(id);
 
 // ---------- 用户与导航 ----------
+// ---------- 每日打卡：随机 +1~10 积分 ----------
+async function doCheckin() {
+  if (!API.token) { openAuthModal(); return; }
+  const btn = document.querySelector('[data-action="checkin"]');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await API.post('/api/checkin', {});
+    if (r.ok) {
+      alert(`🎉 打卡成功！今日 +${r.points_gained} 积分，当前共 ⭐${r.total_points} 分`);
+      state.user.points = r.total_points;
+      await refreshUser();
+      navUpdate();
+      location.reload();
+    } else {
+      alert(r.msg || '打卡失败');
+    }
+  } catch (e) {
+    alert(e.message || '打卡失败，请稍后再试');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function refreshUser() {
   try {
     const r = await fetch('/api/me', {
@@ -31,7 +54,7 @@ function navUpdate() {
   if (state.user) {
     adminNav.style.display = state.user.role === 'admin' ? '' : 'none';
     el.innerHTML = `
-      <a href="#/me" style="color:inherit;text-decoration:none"><span class="u-name">👋 ${escapeHtml(state.user.username)}</span></a>
+      <a href="#/me" style="color:inherit;text-decoration:none"><span class="u-name">👋 ${escapeHtml(state.user.display_name || state.user.username)}</span></a>
       <span class="pts">⭐ ${state.user.points}</span>
       <button class="btn-link" data-action="logout">退出登录</button>
       <button class="btn-link" data-action="delete-account" style="color:#dc2626">注销账号</button>`;
@@ -86,8 +109,9 @@ async function renderProblems(page) {
     <tr>
       <td>${p.id}</td>
       <td><a class="link" href="#/problem/${p.id}">${escapeHtml(p.title)}</a> ${p.solved ? '✅' : ''}</td>
-      <td><span class="diff-badge diff-${Math.min(p.difficulty, 4)}">难度 ${p.difficulty}</span></td>
-      <td>${(p.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</td>
+      <td><span class="diff-badge diff-${Math.min(p.difficulty, 8)}">GESP${p.difficulty}</span></td>
+      <td>${(p.tags || []).map(t => `<span class="tag tag-clickable" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</td>
+      <td>${p.pass_rate != null ? p.pass_rate + '%' : '-'}</td>
     </tr>`).join('');
 
   page.innerHTML = `
@@ -97,15 +121,84 @@ async function renderProblems(page) {
       <b style="font-size:24px;color:#22c55e">⭐ ${state.user.points || 0}</b>
       <span class="muted">AC ${state.user.solved_count || 0} 题</span>
       <span style="flex:1"></span>
+      <button class="btn btn-primary btn-sm" data-action="checkin">📅 每日打卡</button>
       <a class="btn btn-sm" href="#/me">个人主页</a>
       <a class="btn btn-sm" href="#/rank">排行榜</a>
     </div>` : ''}
     <div class="card">
+      <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
+        <input id="prob-search" placeholder="🔍 搜题目 / 标签…" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#111" value="">
+        <button class="btn btn-sm" data-action="prob-search-clear" style="display:none" id="prob-search-clear">✕</button>
+      </div>
+      <div id="hot-tags" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
       <table>
-        <thead><tr><th>#</th><th>题目</th><th>难度</th><th>标签</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="4" class="empty">暂无题目，等管理员投喂吧</td></tr>'}</tbody>
+        <thead><tr><th>#</th><th>题目</th><th>难度</th><th>标签</th><th>通过率</th></tr></thead>
+        <tbody id="prob-tbody">${rows || '<tr><td colspan="5" class="empty">暂无题目，等管理员投喂吧</td></tr>'}</tbody>
       </table>
     </div>`;
+
+  // 搜索过滤
+  const tbody = $('prob-tbody');
+  const allRows = data.problems.map(p => ({ p, html: `
+    <tr>
+      <td>${p.id}</td>
+      <td><a class="link" href="#/problem/${p.id}">${escapeHtml(p.title)}</a> ${p.solved ? '✅' : ''}</td>
+      <td><span class="diff-badge diff-${Math.min(p.difficulty, 8)}">GESP${p.difficulty}</span></td>
+      <td>${(p.tags || []).map(t => `<span class="tag tag-clickable" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</td>
+      <td>${p.pass_rate != null ? p.pass_rate + '%' : '-'}</td>
+    </tr>` }));
+  // 标签筛选状态
+  let activeTag = '';
+  // 高亮所有选中标签（表格行 + 热门条）
+  const refreshTagActive = () => {
+    document.querySelectorAll('.tag-clickable').forEach(t => t.classList.remove('tag-active'));
+    if (activeTag) {
+      document.querySelectorAll('.tag-clickable[data-tag="' + CSS.escape(activeTag) + '"]').forEach(t => t.classList.add('tag-active'));
+    }
+  };
+  // 热门标签条：统计出现最多的前 12 个（规范化后自动浮现核心标签）
+  {
+    const tagCount = {};
+    data.problems.forEach(p => (p.tags || []).forEach(t => { tagCount[t] = (tagCount[t] || 0) + 1; }));
+    const hotTags = Object.keys(tagCount).sort((a, b) => tagCount[b] - tagCount[a]).slice(0, 12);
+    const hotBox = $('hot-tags');
+    if (hotBox) {
+      hotBox.innerHTML = '<span class="muted" style="font-size:12px;margin-right:2px">热门：</span>' + hotTags.map(t =>
+        `<span class="tag tag-clickable" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`
+      ).join('');
+      hotBox.addEventListener('click', e => {
+        const tagEl = e.target.closest('.tag-clickable');
+        if (!tagEl) return;
+        activeTag = (activeTag === tagEl.dataset.tag) ? '' : tagEl.dataset.tag; // 再点取消
+        refreshTagActive();
+        if (activeTag) $('prob-search').value = '';
+        applySearch();
+      });
+    }
+  }
+  const applySearch = () => {
+    const q = ($('prob-search').value || '').trim().toLowerCase();
+    $('prob-search-clear').style.display = q ? '' : 'none';
+    const hits = allRows.filter(({ p }) => {
+      // 题号搜索：输入纯数字时匹配题号
+      if (/^\d+$/.test(q) && String(p.id) === q) return true;
+      if (activeTag && !(p.tags || []).some(t => t === activeTag)) return false;
+      if (!q) return true;
+      return p.title.toLowerCase().includes(q) || (p.tags || []).some(t => t.toLowerCase().includes(q));
+    });
+    tbody.innerHTML = hits.length ? hits.map(x => x.html).join('') : '<tr><td colspan="5" class="empty">没搜到，换关键词试试 🔍</td></tr>';
+  };
+  // 标签点击筛选（委托，表格内标签）
+  tbody.addEventListener('click', e => {
+    const tagEl = e.target.closest('.tag-clickable');
+    if (!tagEl) return;
+    activeTag = (activeTag === tagEl.dataset.tag) ? '' : tagEl.dataset.tag; // 再点取消
+    refreshTagActive();
+    if (activeTag) $('prob-search').value = '';
+    applySearch();
+  });
+  $('prob-search').addEventListener('input', applySearch);
+  $('prob-search-clear').addEventListener('click', () => { $('prob-search').value = ''; applySearch(); });
 }
 
 // ---------- 个人主页 ----------
@@ -124,9 +217,9 @@ async function renderMyProfile(page) {
       <h1 class="page-title">个人主页</h1>
       <div class="card">
         <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-          <div style="width:72px;height:72px;border-radius:50%;background:${t.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:bold">${escapeHtml(u.username.charAt(0).toUpperCase())}</div>
+          <div style="width:72px;height:72px;border-radius:50%;background:${t.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:bold">${escapeHtml((u.display_name || u.username).charAt(0).toUpperCase())}</div>
           <div style="flex:1;min-width:200px">
-            <h2 style="margin:0">${escapeHtml(u.username)}</h2>
+            <h2 style="margin:0">${escapeHtml(u.display_name || u.username)}</h2>
             <p style="margin:6px 0;color:#6b7280;font-style:italic">${data.signature ? '"' + escapeHtml(data.signature) + '"' : '（这家伙很懒，什么也没写）'}</p>
             <span style="background:${t.color};color:#fff;padding:4px 12px;border-radius:12px;font-weight:bold">${escapeHtml(tierName)}</span>
           </div>
@@ -155,6 +248,14 @@ async function renderMyProfile(page) {
           <input id="signature-input" value="${escapeHtml(data.signature)}" placeholder="来一句帅气的个性签名" maxlength="200" style="flex:1">
           <button class="btn btn-primary" data-action="save-signature">保存</button>
         </div>
+      </div>
+      <div class="card">
+        <h3>🏷 自定义昵称（2-16 位，改一次锁 7 天）</h3>
+        <div style="display:flex;gap:8px">
+          <input id="nickname-input" value="${escapeHtml(u.nickname || '')}" placeholder="给自己起个昵称（显示名会跟着变）" maxlength="16" style="flex:1">
+          <button class="btn btn-primary" data-action="save-nickname">保存昵称</button>
+        </div>
+        <p class="muted" id="nickname-status" style="margin-top:6px;font-size:12px">当前显示名：${escapeHtml(u.display_name || u.username)}${u.real_name ? ' · 真实姓名：' + escapeHtml(u.real_name) : ''}</p>
       </div>
       <div class="card">
         <h3>🤖 AI 助手设置</h3>
@@ -273,6 +374,27 @@ async function saveSignature() {
   }
 }
 
+// 2026-10-05 自定义昵称（2-16 位，唯一，7 天冷却）
+async function saveNickname() {
+  const input = $('nickname-input');
+  if (!input) return;
+  const nn = input.value.trim();
+  if (!nn) { alert('昵称不能为空'); return; }
+  try {
+    const d = await API.post('/api/nickname', { nickname: nn });
+    if (d.display_name) state.user.display_name = d.display_name;
+    const st = $('nickname-status');
+    if (st) st.textContent = '✅ 昵称已更新为「' + d.display_name + '」，7 天内不能改';
+    alert('✅ 昵称已更新为「' + d.display_name + '」，7 天内不能改');
+    await refreshUser();
+    renderMyProfile($('page'));
+  } catch (e) {
+    const st = $('nickname-status');
+    if (st) st.textContent = '❌ ' + e.message;
+    alert(e.message);
+  }
+}
+
 // ---------- 网盘 ----------
 function formatSize(b) {
   if (b < 1024) return b + ' B';
@@ -288,6 +410,7 @@ async function renderFiles(page) {
     const used = data.used || 0;
     const quota = data.quota || 0;
     const singleMax = data.single_max || 20*1024*1024;
+    const isAdmin = state.user && state.user.role === 'admin';
     const rows = files.length ? '<table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>上传者</th><th>下载</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
       files.map(f => {
         const canDel = state.user && (state.user.role === 'admin' || state.user.username === f.uploaded_by);
@@ -303,14 +426,14 @@ async function renderFiles(page) {
       }).join('') + '</tbody></table>' : '<div class="empty">还没有文件，上传第一个吧</div>';
     page.innerHTML =
       '<h1 class="page-title">📁 网盘</h1>' +
-      '<div class="card"><h3>上传文件（最大 ' + formatSize(singleMax) + '）</h3>' +
+      (isAdmin ? '<div class="card"><h3>上传文件（最大 ' + formatSize(singleMax) + '）</h3>' +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
           '<input type="file" id="file-input" style="flex:1">' +
           '<button class="btn btn-primary" data-action="upload-file">📤 上传</button>' +
           '<span class="muted" id="upload-status"></span>' +
         '</div>' +
         '<p class="muted" style="margin-top:6px;font-size:12px">已用 ' + formatSize(used) + ' / ' + formatSize(quota) + '（你的角色：' + (data.role||'user') + '）</p>' +
-        '</div>' +
+        '</div>' : '<div class="card"><p class="muted">🔒 只有管理员能上传文件，普通用户可下载以下资源</p></div>') +
       '<div class="card"><h3>文件列表 (' + files.length + ')</h3>' + rows + '</div>';
   } catch (e) {
     page.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
@@ -335,13 +458,27 @@ async function uploadFile() {
   try {
     const fd = new FormData();
     fd.append('file', file);
-    const r = await fetch('/api/files/upload', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + API.token },
-      body: fd
+    // 2026-10-05：XMLHttpRequest 带进度条，大文件不再像卡死
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/files/upload');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + API.token);
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) {
+        const pct = Math.round(e.loaded / e.total * 100);
+        status.textContent = '⏫ 上传中 ' + pct + '%（' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + '）';
+      }
+    };
+    const r = await new Promise(function (resolve, reject) {
+      xhr.onload = function () {
+        try { resolve({ ok: xhr.status >= 200 && xhr.status < 300, json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}')) }); }
+        catch (e) { reject(e); }
+      };
+      xhr.onerror = function () { reject(new Error('网络错误')); };
+      xhr.onabort = function () { reject(new Error('上传中断')); };
+      xhr.send(fd);
     });
     const d = await r.json();
-    if (!r.ok || d.ok === false) throw new Error(d.msg || ('上传失败 ' + r.status));
+    if (!r.ok || d.ok === false) throw new Error(d.msg || ('上传失败 ' + (xhr.status || '?')));
     status.textContent = '✅ ' + file.name + ' 上传成功';
     input.value = '';
     renderFiles($('page'));
@@ -374,25 +511,64 @@ async function renderProblem(id, page) {
       <div class="problem-meta">
         <span>时间限制 <b>${p.time_limit}s</b></span>
         <span>内存限制 <b>${p.memory_limit}MB</b></span>
-        <span>难度 <b>${p.difficulty}</b></span>
+        <span>难度 <b>GESP${p.difficulty}</b></span>
+        <a class="link" style="margin-left:6px" href="https://blog.bitoj.dpdns.org/?q=${encodeURIComponent(p.title)}" target="_blank" rel="noopener" title="在博客搜本题题解">📝 博客题解</a>
       </div>
+      <div class="split-layout">
+      <div class="split-left">
       <h3>题目描述</h3><div class="desc-text">${escapeHtml(p.description)}</div>
       <h3>输入格式</h3><div class="desc-text">${escapeHtml(p.input_desc)}</div>
       <h3>输出格式</h3><div class="desc-text">${escapeHtml(p.output_desc)}</div>
+      ${p.hint ? `
+      <details style="margin:10px 0">
+        <summary style="cursor:pointer;color:#f59e0b;font-weight:600">💡 提示（想不出来再看）</summary>
+        <div class="desc-text" style="margin-top:6px;padding:10px;background:#fffbeb;border-radius:8px">${escapeHtml(p.hint)}</div>
+      </details>` : ''}
       <h3>样例</h3>
       ${(p.samples || []).map((s, i) => `
         <div><b>样例 ${i + 1} 输入</b></div>
         <div class="sample-box">${escapeHtml(s.input)}</div>
         <div><b>样例 ${i + 1} 输出</b></div>
         <div class="sample-box">${escapeHtml(s.output)}</div>`).join('')}
+      </div>
+      <div class="split-right">
       <h3>提交代码（Monaco，Consolas，回车自动缩进）</h3>
       <div id="code-editor" class="editor-wrap"></div>
-      <button class="btn btn-primary" data-action="submit-code" data-id="${p.id}">🚀 提交评测</button>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" data-action="submit-code" data-id="${p.id}">🚀 提交评测</button>
+        <label class="btn btn-sm" style="cursor:pointer;margin:0;background:#eef2ff;color:#4a6cf7;border:none" title="从本地文件读入代码">
+          📂 导入本地文件
+          <input type="file" id="code-file-input" accept=".cpp,.cc,.c,.h,.hpp,.txt,text/plain" style="display:none">
+        </label>
+        <span class="muted" id="file-import-msg" style="font-size:12px"></span>
+      </div>
       <div id="result-panel"></div>
+      </div>
+      </div>
     </div>`;
 
   try {
     await createEditor($('code-editor'));
+    // 本地文件导入：选文件自动读入编辑器（2026-10-05）
+    const fileInput = $('code-file-input');
+    const impMsg = $('file-import-msg');
+    if (fileInput) {
+      fileInput.addEventListener('change', function () {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        const max = 200 * 1024; // 200KB 上限
+        if (f.size > max) { impMsg.textContent = '❌ 文件太大（>' + (max/1024) + 'KB）'; return; }
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const code = String(e.target.result || '');
+          setEditorCode(code);
+          impMsg.textContent = '✅ 已导入 ' + f.name + '（' + (code.length) + ' 字符）';
+        };
+        reader.onerror = function () { impMsg.textContent = '❌ 读取失败'; };
+        reader.readAsText(f);
+        fileInput.value = ''; // 允许重复选同一文件
+      });
+    }
   } catch (e) {
     $('result-panel').innerHTML = `<div class="detail-box">${escapeHtml(e.message)}</div>`;
   }
@@ -497,12 +673,12 @@ async function renderRank(page) {
     const podium = data.ranklist.slice(0, 3).map((u, i) => `
       <div class="p-item">
         <span class="p-icon">${top3[i]}</span>
-        <span class="p-name">${escapeHtml(u.username)}</span><br>
+        <span class="p-name">${escapeHtml(u.display_name || u.username)}</span><br>
         <span class="muted">${u.solved} 题 · ${u.points} 分</span>
       </div>`).join('');
     const rows = data.ranklist.map(u => `
       <tr>
-        <td>${u.rank}</td><td>${escapeHtml(u.username)}</td>
+        <td>${u.rank}</td><td>${escapeHtml(u.display_name || u.username)}</td>
         <td>${u.solved}</td><td>${u.points}</td>
       </tr>`).join('');
     page.innerHTML = `
@@ -619,7 +795,7 @@ async function renderClass(cid, page) {
     const probRows = d.problems.map(p => `
       <tr>
         <td><a class="link" href="#/problem/${p.id}">#${p.id} ${escapeHtml(p.title)}</a></td>
-        <td><span class="diff-badge diff-${Math.min(p.difficulty, 4)}">L${p.difficulty}</span></td>
+        <td><span class="diff-badge diff-${Math.min(p.difficulty, 8)}">GESP${p.difficulty}</span></td>
         ${isAdmin ? `<td><button class="btn btn-danger btn-sm" data-action="class-del-problem" data-cid="${cid}" data-pid="${p.id}">移除</button></td>` : ''}
       </tr>`).join('');
 
@@ -842,6 +1018,17 @@ async function renderAdmin(page) {
     <div class="admin-panel" id="apanel-users">${adminUsersPanel()}</div>
     <div class="admin-panel" id="apanel-points">${adminPointsPanel()}</div>`;
   switchAdminTab(currentAdminTab);
+  // 用户搜索绑定
+  const us = $('user-search');
+  if (us) {
+    us.addEventListener('input', () => {
+      const q = us.value.trim().toLowerCase();
+      $('user-search-clear').style.display = q ? '' : 'none';
+      const rows = adminData.users.filter(u => !q || u.username.toLowerCase().includes(q) || String(u.id).includes(q));
+      $('user-tbody').innerHTML = rows.length ? rows.map(u => userRow(u, userRoleBadge)).join('') : '<tr><td colspan="7" class="empty">没搜到这个人 🤔</td></tr>';
+    });
+    $('user-search-clear').addEventListener('click', () => { us.value = ''; us.dispatchEvent(new Event('input')); });
+  }
 }
 
 function switchAdminTab(tab) {
@@ -860,12 +1047,13 @@ function adminProblemPanel() {
       <h3 id="admin-form-title">新增题目</h3>
       <div class="form-grid">
         <div><label>题目标题 *</label><input id="p-title" placeholder="如：A+B Problem"></div>
-        <div><label>难度 (1-4)</label><input id="p-diff" type="number" min="1" max="4" value="1"></div>
+        <div><label>难度等级 (1-4 → 显示 GESP1~GESP4)</label><input id="p-diff" type="number" min="1" max="4" value="1"></div>
         <div><label>时间限制（秒）</label><input id="p-time" type="number" min="1" value="1"></div>
         <div><label>内存限制（MB）</label><input id="p-mem" type="number" min="16" value="256"></div>
         <div style="grid-column:1/-1"><label>题目描述</label><textarea id="p-desc"></textarea></div>
         <div style="grid-column:1/-1"><label>输入格式</label><textarea id="p-input"></textarea></div>
         <div style="grid-column:1/-1"><label>输出格式</label><textarea id="p-output"></textarea></div>
+        <div style="grid-column:1/-1"><label>提示（可选，学员想不出来时可以看）</label><textarea id="p-hint" placeholder="如：先读入 n，用循环累加"></textarea></div>
         <div><label>标签（逗号分隔）</label><input id="p-tags" placeholder="递推, 递归"></div>
         <div><label>样例（JSON）</label>
           <textarea id="p-samples">[{"input":"1 2","output":"3"}]</textarea></div>
@@ -958,18 +1146,30 @@ function adminClassPanel() {
     </div>`;
 }
 
+function userRoleBadge(r) {
+  if (r === 'admin') return '<span class="tag" style="background:#dc2626;color:#fff">超级管理员</span>';
+  if (r === 'class_admin') return '<span class="tag" style="background:#f59e0b;color:#fff">班级管理员</span>';
+  return '<span class="tag">普通用户</span>';
+}
+
 function adminUsersPanel() {
-  const roleBadge = r => {
-    if (r === 'admin') return '<span class="tag" style="background:#dc2626;color:#fff">超级管理员</span>';
-    if (r === 'class_admin') return '<span class="tag" style="background:#f59e0b;color:#fff">班级管理员</span>';
-    return '<span class="tag">普通用户</span>';
-  };
+  const roleBadge = userRoleBadge;
   return `
     <div class="card">
       <h3>用户与角色</h3>
       <p class="muted">说明：<b>超级管理员</b>拥有所有权限；<b>班级管理员</b>仅能创建/管理班级，无法进入此后台。</p>
-      <table><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>积分</th><th>AC数</th><th>注册时间</th><th>操作</th></tr></thead><tbody>
-        ${adminData.users.map(u => `<tr>
+      <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
+        <input id="user-search" placeholder="🔍 搜用户名 / ID…" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#111" value="">
+        <button class="btn btn-sm" data-action="user-search-clear" style="display:none" id="user-search-clear">✕</button>
+      </div>
+      <table><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>积分</th><th>AC数</th><th>注册时间</th><th>操作</th></tr></thead><tbody id="user-tbody">
+        ${adminData.users.map(u => userRow(u, roleBadge)).join('')}
+      </tbody></table>
+    </div>`;
+}
+
+function userRow(u, roleBadge) {
+  return `<tr>
           <td>#${u.id}</td>
           <td>${escapeHtml(u.username)}</td>
           <td>${roleBadge(u.role)}</td>
@@ -984,9 +1184,7 @@ function adminUsersPanel() {
             </select>
             <button class="btn btn-danger btn-sm" data-action="admin-del-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}" style="margin-left:6px">删除</button>
           </td>
-        </tr>`).join('')}
-      </tbody></table>
-    </div>`;
+        </tr>`;
 }
 
 async function grantPoints() {
@@ -1072,6 +1270,7 @@ async function adminSaveProblem() {
     description: v('p-desc'),
     input_desc: v('p-input'),
     output_desc: v('p-output'),
+    hint: v('p-hint'),
     time_limit: parseInt(v('p-time')) || 1,
     memory_limit: parseInt(v('p-mem')) || 256,
     difficulty: parseInt(v('p-diff')) || 1,
@@ -1100,6 +1299,7 @@ async function adminEditProblem(id) {
     $('p-desc').value = p.description || '';
     $('p-input').value = p.input_desc || '';
     $('p-output').value = p.output_desc || '';
+    $('p-hint').value = p.hint || '';
     $('p-tags').value = (p.tags || []).join(',');
     $('p-samples').value = JSON.stringify(p.samples || []);
     $('p-testcases').value = JSON.stringify(p.testcases || []);
@@ -1113,6 +1313,7 @@ async function adminEditProblem(id) {
 function adminResetProblemForm() {
   adminEditingId = null;
   ['p-title', 'p-desc', 'p-input', 'p-output', 'p-tags'].forEach(id => $(id).value = '');
+  $('p-hint').value = '';
   $('p-diff').value = 1; $('p-time').value = 1; $('p-mem').value = 256;
   $('p-samples').value = '[{"input":"1 2","output":"3"}]';
   $('p-testcases').value = '[{"input":"1 2\\n","output":"3\\n"}]';
@@ -1158,6 +1359,8 @@ document.addEventListener('click', (e) => {
       location.hash = '#/problems';
       refreshUser();
       break;
+
+    case 'checkin': doCheckin(); break;
 
     case 'delete-account':
       openConfirmModal('⚠️ 确定注销账号吗？\n此操作不可恢复：你的提交记录、积分、所在班级成员身份都将被清除。', async () => {
@@ -1222,6 +1425,7 @@ document.addEventListener('click', (e) => {
 
     case 'admin-add-class': adminAddClass(); break;
     case 'save-signature': saveSignature(); break;
+    case 'save-nickname': saveNickname(); break;
     case 'save-ai-key': saveAiKey(); break;
     case 'clear-ai-key': clearAiKey(); break;
     case 'ai-send': aiSend(); break;
@@ -1331,7 +1535,8 @@ function initTheme() { /* 主题切换已移除，固定液态玻璃样式 */ }
 
 // ---------- 液态玻璃 + 低性能模式 ----------
 function initLiquid() {
-  document.body.classList.add('liquid-bg');
+  // 2026-09-16: 爸爸要求背景白色，去掉强制暗色液态玻璃
+  // document.body.classList.add('liquid-bg');
   const p = localStorage.getItem('oj_perf');
   if (p === 'low') document.body.classList.add('low-perf');
   const k = document.getElementById('perf-toggle');
@@ -1366,6 +1571,8 @@ async function renderSideAuth() {
       </div>
       <div class="side-form">
         <label>用户名</label><input id="side-username" placeholder="用户名" autocomplete="username">
+        <label id="side-real-label" style="margin-top:10px;display:none">真实姓名</label>
+        <input id="side-real" style="margin-top:10px;display:none" placeholder="注册必填；登录填注册时姓名">
         <label style="margin-top:10px">密码</label><input id="side-password" type="password" placeholder="密码" autocomplete="current-password">
         <button class="btn btn-primary" style="width:100%;margin-top:14px" id="side-submit-btn" data-action="side-login">进入</button>
         <p class="muted" id="side-auth-status" style="font-size:12px;margin-top:8px"></p>
@@ -1375,8 +1582,8 @@ async function renderSideAuth() {
     const pts = state.user.points || 0;
     box.innerHTML = `
       <div style="text-align:center">
-        <div style="width:64px;height:64px;border-radius:50%;margin:6px auto 10px;background:linear-gradient(135deg,#22c55e,#0ea5e9);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff">${escapeHtml(state.user.username.charAt(0).toUpperCase())}</div>
-        <h3 style="margin:0">${escapeHtml(state.user.username)}</h3>
+        <div style="width:64px;height:64px;border-radius:50%;margin:6px auto 10px;background:linear-gradient(135deg,#22c55e,#0ea5e9);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff">${escapeHtml((state.user.display_name || state.user.username).charAt(0).toUpperCase())}</div>
+        <h3 style="margin:0">${escapeHtml(state.user.display_name || state.user.username)}</h3>
         <p class="muted" style="margin:4px 0">${state.user.role === 'admin' ? '👑 超级管理员' : state.user.role === 'class_admin' ? '🏫 班级管理员' : '👤 普通用户'}</p>
         <div style="display:flex;gap:10px;justify-content:center;margin:12px 0">
           <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:8px 14px"><b>⭐ ${pts}</b><div class="muted" style="font-size:12px">积分</div></div>
@@ -1391,12 +1598,15 @@ async function renderSideAuth() {
 async function sideLogin() {
   const u = document.getElementById('side-username').value.trim();
   const p = document.getElementById('side-password').value;
+  const real = document.getElementById('side-real').value.trim();
   const st = document.getElementById('side-auth-status');
   if (!u || !p) { st.textContent = '用户名和密码都要填哦'; return; }
   try {
-    const d = await API.post('/api/login', { username: u, password: p });
+    const payload = { username: u, password: p };
+    if (real) payload.real_name = real;
+    const d = await API.post('/api/login', payload);
     API.setToken(d.token);
-    state.user = { username: d.username, role: d.role, points: d.points || 0, solved_count: d.solved_count || 0 };
+    state.user = { username: d.username, role: d.role, points: d.points || 0, solved_count: d.solved_count || 0, display_name: d.display_name || d.username };
     st.textContent = '✅ 欢迎回来！';
     await refreshUser();
     renderSideAuth();
@@ -1407,27 +1617,35 @@ function sideTab(tab) {
   const regBtn = document.getElementById('side-tab-reg');
   const btn = document.getElementById('side-submit-btn');
   const st = document.getElementById('side-auth-status');
+  const realLabel = document.getElementById('side-real-label');
+  const realInput = document.getElementById('side-real');
   if (st) st.textContent = '';
   if (!loginBtn || !btn) return;
   if (tab === 'register') {
     loginBtn.classList.remove('active'); regBtn.classList.add('active');
     btn.textContent = '注册新号';
     btn.dataset.action = 'side-register';
+    if (realLabel) realLabel.style.display = '';
+    if (realInput) { realInput.style.display = ''; realInput.required = true; }
   } else {
     regBtn.classList.remove('active'); loginBtn.classList.add('active');
     btn.textContent = '进入';
     btn.dataset.action = 'side-login';
+    if (realLabel) realLabel.style.display = 'none';
+    if (realInput) { realInput.style.display = 'none'; realInput.required = false; }
   }
 }
 async function sideRegister() {
   const u = document.getElementById('side-username').value.trim();
   const p = document.getElementById('side-password').value;
+  const real = document.getElementById('side-real').value.trim();
   const st = document.getElementById('side-auth-status');
   if (!u || !p) { st.textContent = '用户名和密码都要填哦'; return; }
+  if (!real) { st.textContent = '注册需要填真实姓名'; return; }
   try {
-    const d = await API.post('/api/register', { username: u, password: p });
+    const d = await API.post('/api/register', { username: u, password: p, real_name: real });
     API.setToken(d.token);
-    state.user = { username: d.username, role: d.role, points: 0, solved_count: 0 };
+    state.user = { username: d.username, role: d.role, points: 0, solved_count: 0, display_name: d.display_name || d.username };
     st.textContent = '🎉 注册成功！';
     await refreshUser();
     renderSideAuth();

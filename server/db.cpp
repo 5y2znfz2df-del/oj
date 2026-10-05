@@ -4,16 +4,26 @@
 #include <thread>
 #include <chrono>
 
+// 2026-10-04：C 原生互斥锁，静态初始化器，避开 macOS 全局静态 std::mutex 的跨 libc++ 坑
+DB::DB() { pthread_mutex_init(&mu_, nullptr); }
+DB::~DB() { close(); pthread_mutex_destroy(&mu_); }
+
+static void lock_db(pthread_mutex_t* m) { pthread_mutex_lock(m); }
+static void unlock_db(pthread_mutex_t* m) { pthread_mutex_unlock(m); }
+
 bool DB::connect(const std::string& host, int port,
                  const std::string& user, const std::string& pass,
                  const std::string& dbname,
                  const std::string& unix_socket) {
+    lock_db(&mu_);
     host_ = host; port_ = port; user_ = user; pass_ = pass; dbname_ = dbname;
     socket_ = unix_socket;
-    return reconnect();
+    bool r = reconnect_locked();
+    unlock_db(&mu_);
+    return r;
 }
 
-bool DB::reconnect() {
+bool DB::reconnect_locked() {
     // 绝不 mysql_close 旧句柄：这个 macOS 14 编译的 libmysqlclient 在已断开的连接上
     // 调用任何库函数（mysql_ping/mysql_close/mysql_real_query）都会崩（SIGSEGV/SIGABRT）。
     // 检测到连接断开后直接丢弃引用重建，旧句柄交给进程退出/GC 回收，泄漏量可忽略。
@@ -41,7 +51,7 @@ bool DB::reconnect() {
     return true;
 }
 
-bool DB::ensure_conn() {
+bool DB::ensure_conn_locked() {
     // 不再用 mysql_ping 探测连接（2026-10-01 修复：libmysqlclient 在已被服务端掐断的
     // 连接上 ping 会堆损坏 SIGABRT 崩溃，崩溃栈 mysql_ping → cli_advanced_command →
     // cli_safe_read_with_ok_complete → end_server → malloc abort）。死连接由
@@ -49,7 +59,7 @@ bool DB::ensure_conn() {
     if (!conn_) {
         // 重连（最多重试 3 次，每次间隔 1 秒）
         for (int i = 0; i < 3; i++) {
-            if (reconnect()) return true;
+            if (reconnect_locked()) return true;
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
         fprintf(stderr, "[db] 重连 MySQL 失败，已放弃\n");
@@ -60,12 +70,18 @@ bool DB::ensure_conn() {
 
 bool DB::ping() {
     // 不再调用 mysql_ping（见 ensure_conn 注释，死连接上 ping 会触发 libmysqlclient 堆崩溃）
-    return conn_ != nullptr;
+    lock_db(&mu_);
+    bool r = conn_ != nullptr;
+    unlock_db(&mu_);
+    return r;
 }
 
 bool DB::query(const std::string& sql) {
+    lock_db(&mu_);
+    bool ok = false;
     for (int attempt = 0; attempt < 2; attempt++) {
-        if (!ensure_conn()) return false;
+        if (!ensure_conn_locked()) break;
+        if (mysql_query(conn_, sql.c_str()) == 0) { ok = true; break; }
         if (mysql_query(conn_, sql.c_str()) == 0) return true;
         unsigned int err = mysql_errno(conn_);
         fprintf(stderr, "[db] 执行失败(attempt=%d errno=%u): %s\n  SQL: %s\n",
@@ -74,20 +90,22 @@ bool DB::query(const std::string& sql) {
         if (err != 2006 /*CR_SERVER_GONE_ERROR*/ &&
             err != 2013 /*CR_SERVER_LOST*/ &&
             err != 2003 /*CR_CONN_HOST_ERROR*/) {
-            return false;
+            break;
         }
         // 连接已死：绝不再碰旧句柄（mysql_close 在死连接上会段错误），直接丢弃引用，
         // 下一轮 ensure_conn() 会走 reconnect() 重建（2026-10-01 二次修复）
         fprintf(stderr, "[db] 检测到连接断开，准备重连...\n");
         conn_ = nullptr;
     }
-    return false;
+    unlock_db(&mu_);
+    return ok;
 }
 
 std::vector<std::vector<std::string>> DB::rows(const std::string& sql) {
+    lock_db(&mu_);
     std::vector<std::vector<std::string>> out;
     for (int attempt = 0; attempt < 2; attempt++) {
-        if (!ensure_conn()) return out;
+        if (!ensure_conn_locked()) break;
         if (mysql_query(conn_, sql.c_str()) != 0) {
             unsigned int err = mysql_errno(conn_);
             fprintf(stderr, "[db] 查询失败(attempt=%d errno=%u): %s\n  SQL: %s\n",
@@ -99,7 +117,7 @@ std::vector<std::vector<std::string>> DB::rows(const std::string& sql) {
             continue;
         }
         MYSQL_RES* r = mysql_store_result(conn_);
-        if (!r) return out;
+        if (!r) break;
         unsigned int ncol = mysql_num_fields(r);
         MYSQL_ROW row;
         while ((row = mysql_fetch_row(r))) {
@@ -112,24 +130,40 @@ std::vector<std::vector<std::string>> DB::rows(const std::string& sql) {
             out.push_back(std::move(line));
         }
         mysql_free_result(r);
-        return out;
+        break;
     }
+    unlock_db(&mu_);
     return out;
 }
 
 unsigned long long DB::insert_id() {
-    return conn_ ? (unsigned long long)mysql_insert_id(conn_) : 0;
+    lock_db(&mu_);
+    unsigned long long r = conn_ ? (unsigned long long)mysql_insert_id(conn_) : 0;
+    unlock_db(&mu_);
+    return r;
 }
 
 std::string DB::escape(const std::string& s) {
-    ensure_conn();
-    if (!conn_) return s;
+    lock_db(&mu_);
+    ensure_conn_locked();
     std::string out(s.size() * 2 + 1, '\0');
-    unsigned long n = mysql_real_escape_string(conn_, &out[0], s.data(), s.size());
-    out.resize(n);
+    if (conn_) {
+        unsigned long n = mysql_real_escape_string(conn_, &out[0], s.data(), s.size());
+        out.resize(n);
+    } else { out = s; }
+    unlock_db(&mu_);
     return out;
 }
 
+bool DB::ok() const {
+    lock_db(&mu_);
+    bool r = conn_ != nullptr;
+    unlock_db(&mu_);
+    return r;
+}
+
 void DB::close() {
+    lock_db(&mu_);
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }
+    unlock_db(&mu_);
 }
